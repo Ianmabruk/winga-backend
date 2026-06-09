@@ -9,12 +9,20 @@ const REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'dev_refresh_secret_cha
 
 const router = express.Router()
 
-const mockUser = {
-  id: 'usr_admin_001',
-  email: 'admin@wingaforex.com',
-  role: 'admin',
-  passwordHash: bcrypt.hashSync('Admin@12345', 10),
-}
+const mockUsers = [
+  {
+    id: 'usr_admin_001',
+    email: 'admin@wingaforex.co.tz',
+    role: 'admin',
+    passwordHash: bcrypt.hashSync('Admin@12345', 10),
+  },
+  {
+    id: 'usr_client_001',
+    email: 'client@wingaforex.co.tz',
+    role: 'client',
+    passwordHash: bcrypt.hashSync('Client@12345', 10),
+  },
+]
 
 router.post('/login', async (req, res) => {
   const { email, password } = req.body
@@ -22,8 +30,8 @@ router.post('/login', async (req, res) => {
     return res.status(400).json({ message: 'Email and password are required' })
   }
 
-  let user = mockUser
-  let passwordHash = mockUser.passwordHash
+  let user = null
+  let passwordHash = null
 
   if (db.isReady()) {
     const result = await db.query(
@@ -39,8 +47,11 @@ router.post('/login', async (req, res) => {
     if (!found) return res.status(401).json({ message: 'Invalid credentials' })
     user = { id: found.id, email: found.email, role: found.role || 'client' }
     passwordHash = found.password_hash
-  } else if (email !== mockUser.email) {
-    return res.status(401).json({ message: 'Invalid credentials' })
+  } else {
+    const found = mockUsers.find((item) => item.email.toLowerCase() === email.toLowerCase())
+    if (!found) return res.status(401).json({ message: 'Invalid credentials' })
+    user = { id: found.id, email: found.email, role: found.role }
+    passwordHash = found.passwordHash
   }
 
   const match = await bcrypt.compare(password, passwordHash)
