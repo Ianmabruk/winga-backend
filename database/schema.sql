@@ -1,3 +1,6 @@
+-- PostgreSQL reference schema (for Docker/container deployments)
+-- The production cPanel deployment uses MySQL — see database/mysql-schema.sql
+
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE IF NOT EXISTS roles (
@@ -30,10 +33,12 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE TABLE IF NOT EXISTS exchange_rates (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   currency_code VARCHAR(8) NOT NULL,
-  buy NUMERIC(18, 6) NOT NULL,
-  sell NUMERIC(18, 6) NOT NULL,
-  source VARCHAR(60) DEFAULT 'internal',
-  created_at TIMESTAMP DEFAULT NOW()
+  currency_name VARCHAR(120) NOT NULL,
+  buying_rate NUMERIC(18, 6) NOT NULL,
+  selling_rate NUMERIC(18, 6) NOT NULL,
+  effective_date_time TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
+  source VARCHAR(60) DEFAULT 'internal'
 );
 
 CREATE TABLE IF NOT EXISTS transactions (

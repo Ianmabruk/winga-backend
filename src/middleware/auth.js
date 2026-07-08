@@ -1,6 +1,10 @@
 const jwt = require('jsonwebtoken')
 
-const ACCESS_SECRET = process.env.JWT_ACCESS_SECRET || 'dev_access_secret_change_in_production'
+const ACCESS_SECRET = process.env.JWT_ACCESS_SECRET
+
+if (!ACCESS_SECRET && process.env.NODE_ENV === 'production') {
+  throw new Error('JWT_ACCESS_SECRET is required in production')
+}
 
 const authRequired = (req, res, next) => {
   const token = req.headers.authorization?.replace('Bearer ', '')

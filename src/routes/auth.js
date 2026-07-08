@@ -4,25 +4,19 @@ const jwt = require('jsonwebtoken')
 const { signAccessToken, signRefreshToken } = require('../utils/tokens')
 const db = require('../config/db')
 
-const ACCESS_SECRET = process.env.JWT_ACCESS_SECRET || 'dev_access_secret_change_in_production'
-const REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'dev_refresh_secret_change_in_production'
+const ACCESS_SECRET = process.env.JWT_ACCESS_SECRET
+const REFRESH_SECRET = process.env.JWT_REFRESH_SECRET
+
+if (process.env.NODE_ENV === 'production') {
+  if (!ACCESS_SECRET) {
+    throw new Error('JWT_ACCESS_SECRET is required in production')
+  }
+  if (!REFRESH_SECRET) {
+    throw new Error('JWT_REFRESH_SECRET is required in production')
+  }
+}
 
 const router = express.Router()
-
-const mockUsers = [
-  {
-    id: 'usr_admin_001',
-    email: 'admin@wingaforex.co.tz',
-    role: 'admin',
-    passwordHash: bcrypt.hashSync('Admin@12345', 10),
-  },
-  {
-    id: 'usr_client_001',
-    email: 'client@wingaforex.co.tz',
-    role: 'client',
-    passwordHash: bcrypt.hashSync('Client@12345', 10),
-  },
-]
 
 router.post('/login', async (req, res) => {
   const { email, password } = req.body
@@ -38,16 +32,35 @@ router.post('/login', async (req, res) => {
       `SELECT u.id, u.email, u.password_hash, r.code as role
        FROM users u
        LEFT JOIN roles r ON r.id = u.role_id
-       WHERE lower(u.email) = lower($1)
+       WHERE lower(u.email) = lower(?)
        LIMIT 1`,
       [email],
     )
 
-    const found = result.rows[0]
+    const found = result[0][0]
     if (!found) return res.status(401).json({ message: 'Invalid credentials' })
     user = { id: found.id, email: found.email, role: found.role || 'client' }
     passwordHash = found.password_hash
   } else {
+    // In production, database must be configured
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(500).json({ message: 'Service temporarily unavailable' })
+    }
+    // Development fallback mock users
+    const mockUsers = [
+      {
+        id: 'usr_admin_001',
+        email: 'admin@wingaforex.co.tz',
+        role: 'admin',
+        passwordHash: bcrypt.hashSync('Admin@12345', 10),
+      },
+      {
+        id: 'usr_client_001',
+        email: 'client@wingaforex.co.tz',
+        role: 'client',
+        passwordHash: bcrypt.hashSync('Client@12345', 10),
+      },
+    ]
     const found = mockUsers.find((item) => item.email.toLowerCase() === email.toLowerCase())
     if (!found) return res.status(401).json({ message: 'Invalid credentials' })
     user = { id: found.id, email: found.email, role: found.role }
@@ -59,16 +72,16 @@ router.post('/login', async (req, res) => {
 
   if (db.isReady()) {
     const refreshHash = await bcrypt.hash(`r:${user.id}:${Date.now()}`, 8)
-    await db.query(
-      `INSERT INTO sessions (user_id, refresh_token_hash, ip_address, device_fingerprint, expires_at)
-       VALUES ($1, $2, $3, $4, NOW() + interval '7 days')`,
-      [
-        user.id,
-        refreshHash,
-        req.auditContext?.ip || null,
-        req.auditContext?.device || null,
-      ],
-    )
+      await db.query(
+        `INSERT INTO sessions (user_id, refresh_token_hash, ip_address, device_fingerprint, expires_at)
+         VALUES (?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL 7 DAY))`,
+        [
+          user.id,
+          refreshHash,
+          req.auditContext?.ip || null,
+          req.auditContext?.device || null,
+        ],
+      )
   }
 
   const accessToken = signAccessToken(user)

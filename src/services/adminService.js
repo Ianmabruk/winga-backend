@@ -14,35 +14,41 @@ const mem = {
 }
 
 const listUsers = async () => {
-  if (!db.isReady()) return mem.users
+  if (!db.isReady()) {
+    return mem.users
+  }
   const result = await db.query(
     `SELECT u.id, u.full_name, u.email, u.phone, u.kyc_status, r.code as role
      FROM users u
      LEFT JOIN roles r ON r.id = u.role_id
      ORDER BY u.created_at DESC`,
   )
-  return result.rows
+  return result[0]
 }
 
-const createUser = async ({ fullName, email, phone, role = 'client', password = 'ChangeMe@123' }) => {
+const createUser = async ({ fullName, email, phone, role = 'client', password }) => {
   if (!db.isReady()) {
     const row = { id: uuid(), full_name: fullName, email, phone, kyc_status: 'pending', role }
     mem.users.unshift(row)
     return row
   }
 
-  const roleRow = await db.query('SELECT id FROM roles WHERE code = $1 LIMIT 1', [role])
-  const roleId = roleRow.rows[0]?.id || null
+  const roleRow = await db.query('SELECT id FROM roles WHERE code = ? LIMIT 1', [role])
+  const roleId = roleRow[0][0]?.id || null
   const passwordHash = await bcrypt.hash(password, 10)
 
   const result = await db.query(
     `INSERT INTO users (role_id, full_name, email, phone, password_hash)
-     VALUES ($1, $2, $3, $4, $5)
-     RETURNING id, full_name, email, phone, kyc_status`,
+     VALUES (?, ?, ?, ?, ?)`,
     [roleId, fullName, email, phone, passwordHash],
   )
 
-  return { ...result.rows[0], role }
+  const inserted = await db.query(
+    'SELECT id, full_name, email, phone, kyc_status FROM users WHERE id = ?',
+    [result[0].insertId],
+  )
+
+  return { ...inserted[0][0], role }
 }
 
 const updateUser = async (id, updates) => {
@@ -55,24 +61,28 @@ const updateUser = async (id, updates) => {
 
   const result = await db.query(
     `UPDATE users
-     SET full_name = COALESCE($2, full_name),
-         phone = COALESCE($3, phone),
-         kyc_status = COALESCE($4, kyc_status)
-     WHERE id = $1
-     RETURNING id, full_name, email, phone, kyc_status`,
-    [id, updates.full_name, updates.phone, updates.kyc_status],
+     SET full_name = COALESCE(?, full_name),
+         phone = COALESCE(?, phone),
+         kyc_status = COALESCE(?, kyc_status)
+     WHERE id = ?`,
+    [updates.full_name, updates.phone, updates.kyc_status, id]
   )
 
-  if (!result.rows[0]) return null
+  if (result[0].affectedRows === 0) return null
 
   if (updates.role) {
-    const roleRow = await db.query('SELECT id FROM roles WHERE code = $1 LIMIT 1', [updates.role])
-    if (roleRow.rows[0]) {
-      await db.query('UPDATE users SET role_id = $2 WHERE id = $1', [id, roleRow.rows[0].id])
+    const roleRow = await db.query('SELECT id FROM roles WHERE code = ? LIMIT 1', [updates.role])
+    if (roleRow[0][0]) {
+      await db.query('UPDATE users SET role_id = ? WHERE id = ?', [roleRow[0][0].id, id])
     }
   }
 
-  return { ...result.rows[0], role: updates.role }
+  const updated = await db.query(
+    'SELECT id, full_name, email, phone, kyc_status FROM users WHERE id = ?',
+    [id]
+  )
+
+  return { ...updated[0][0], role: updates.role }
 }
 
 const deleteUser = async (id) => {
@@ -82,8 +92,8 @@ const deleteUser = async (id) => {
     return before !== mem.users.length
   }
 
-  const result = await db.query('DELETE FROM users WHERE id = $1', [id])
-  return result.rowCount > 0
+  const result = await db.query('DELETE FROM users WHERE id = ?', [id])
+  return result[0].affectedRows > 0
 }
 
 const listKyc = async () => {
@@ -94,9 +104,11 @@ const listKyc = async () => {
 const updateKycStatus = async (id, status) => updateUser(id, { kyc_status: status })
 
 const listBranches = async () => {
-  if (!db.isReady()) return mem.branches
+  if (!db.isReady()) {
+    return mem.branches
+  }
   const result = await db.query('SELECT * FROM branches ORDER BY created_at DESC')
-  return result.rows
+  return result[0]
 }
 
 const createBranch = async ({ name, city, country, status = 'active' }) => {
@@ -108,11 +120,16 @@ const createBranch = async ({ name, city, country, status = 'active' }) => {
 
   const result = await db.query(
     `INSERT INTO branches (name, city, country, status)
-     VALUES ($1, $2, $3, $4)
-     RETURNING *`,
+     VALUES (?, ?, ?, ?)`,
     [name, city, country, status],
   )
-  return result.rows[0]
+
+  const inserted = await db.query(
+    'SELECT * FROM branches WHERE id = ?',
+    [result[0].insertId],
+  )
+
+  return inserted[0][0]
 }
 
 const updateBranch = async (id, updates) => {
@@ -125,12 +142,15 @@ const updateBranch = async (id, updates) => {
 
   const result = await db.query(
     `UPDATE branches
-     SET name = COALESCE($2, name), city = COALESCE($3, city), country = COALESCE($4, country), status = COALESCE($5, status)
-     WHERE id = $1
-     RETURNING *`,
+     SET name = COALESCE(?, name), city = COALESCE(?, city), country = COALESCE(?, country), status = COALESCE(?, status)
+     WHERE id = ?`,
     [id, updates.name, updates.city, updates.country, updates.status],
   )
-  return result.rows[0] || null
+
+  if (result[0].affectedRows === 0) return null
+
+  const updated = await db.query('SELECT * FROM branches WHERE id = ?', [id])
+  return updated[0][0] || null
 }
 
 const deleteBranch = async (id) => {
@@ -140,8 +160,8 @@ const deleteBranch = async (id) => {
     return before !== mem.branches.length
   }
 
-  const result = await db.query('DELETE FROM branches WHERE id = $1', [id])
-  return result.rowCount > 0
+  const result = await db.query('DELETE FROM branches WHERE id = ?', [id])
+  return result[0].affectedRows > 0
 }
 
 const listAuditLogs = async () => {
@@ -149,8 +169,8 @@ const listAuditLogs = async () => {
     return [{ id: 'audit_demo_01', action: 'seed.startup', entity: 'system', entity_id: 'bootstrap', ip_address: '127.0.0.1', created_at: new Date().toISOString() }]
   }
 
-  const result = await db.query('SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 200')
-  return result.rows
+  const result = await db.query('SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT ?', [200])
+  return result[0]
 }
 
 module.exports = {
