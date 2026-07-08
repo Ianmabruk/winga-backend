@@ -3,8 +3,8 @@ services:
     name: winga-backend
     runtime: node
     plan: starter
-    buildCommand: cd backend && npm install --omit=dev
-    startCommand: cd backend && node src/server.js
+    buildCommand: npm install --omit=dev
+    startCommand: node src/server.js
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
