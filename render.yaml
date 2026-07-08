@@ -1,0 +1,51 @@
+services:
+  - type: web
+    name: winga-backend
+    runtime: node
+    plan: starter
+    buildCommand: cd backend && npm install --omit=dev
+    startCommand: cd backend && node src/server.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 4000
+      - key: FRONTEND_ORIGIN
+        value: https://wingaforex.co.tz
+      - key: WINGA_BRANCH
+        value: HEAD OFFICE
+      - key: SYNC_INTERVAL_MS
+        value: 15000
+      - key: SERVE_STATIC
+        value: "1"
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: WINGA_API_KEY
+        sync: false
+      - key: WINGA_API_SECRET
+        sync: false
+      - key: DB_HOST
+        fromDatabase:
+          name: winga-forex-db
+          property: host
+      - key: DB_USER
+        fromDatabase:
+          name: winga-forex-db
+          property: user
+      - key: DB_PASSWORD
+        fromDatabase:
+          name: winga-forex-db
+          property: password
+      - key: DB_NAME
+        fromDatabase:
+          name: winga-forex-db
+          property: database
+
+databases:
+  - name: winga-forex-db
+    plan: starter
+    databaseName: winga_forex
+    user: winga_user
