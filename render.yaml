@@ -17,8 +17,6 @@ services:
         value: HEAD OFFICE
       - key: SYNC_INTERVAL_MS
         value: 15000
-      - key: SERVE_STATIC
-        value: "1"
       - key: JWT_ACCESS_SECRET
         generateValue: true
       - key: JWT_REFRESH_SECRET

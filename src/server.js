@@ -129,43 +129,6 @@ app.get('/api/rates/public', async (_req, res) => {
   }
 })
 
-app.get('/api/winga-rates.php', async (req, res) => {
-  const branch = req.query.branch || 'HEAD OFFICE'
-  try {
-    const rates = await fetchWingaRates(branch)
-    const message = rates.map((r) => ({ ...r, source: 'winga-live' }))
-    return res.json({ message })
-  } catch (err) {
-    console.error('[api] winga-rates proxy failed:', err.message)
-    const dbResult = await getLatestRates(branch)
-    if (dbResult.rates?.length) {
-      return res.json({ message: dbResult.rates.map((r) => ({ ...r, source: 'winga-cached' })) })
-    }
-    return res.status(503).json({ error: 'Winga rates unavailable', source: 'unavailable' })
-  }
-})
-
-app.get('/api/winga-branches.php', async (_req, res) => {
-  try {
-    const result = await syncBranches()
-    if (result.branches?.length) {
-      return res.json({ message: result.branches })
-    }
-    return res.json({
-      message: [
-        { branch_name: 'HEAD OFFICE', branch_abbr: 'HO', city: 'Dar es Salaam', country: 'Tanzania', status: 'active' },
-      ],
-    })
-  } catch (err) {
-    console.error('[api] winga-branches proxy failed:', err.message)
-    return res.json({
-      message: [
-        { branch_name: 'HEAD OFFICE', branch_abbr: 'HO', city: 'Dar es Salaam', country: 'Tanzania', status: 'active' },
-      ],
-    })
-  }
-})
-
 async function broadcastRates() {
   try {
     const dbRates = await getLatestRates()

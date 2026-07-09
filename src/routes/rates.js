@@ -1,6 +1,6 @@
 const express = require('express')
 const { getRates, calculateExchange } = require('../services/rateEngine')
-const { getLatestRates } = require('../services/syncService')
+const { getLatestRates, fetchWingaRates } = require('../services/syncService')
 const db = require('../config/db')
 
 const router = express.Router()
@@ -65,6 +65,22 @@ router.get('/branches', async (_req, res) => {
       },
     ],
   })
+})
+
+router.get('/live', async (req, res) => {
+  const branchName = req.query.branch_name || BRANCH_NAME
+  try {
+    const rates = await fetchWingaRates(branchName)
+    const message = rates.map((r) => ({ ...r, source: 'winga-live' }))
+    return res.json({ message })
+  } catch (err) {
+    console.error('[rates] live fetch failed:', err.message)
+    const dbResult = await getLatestRates(branchName)
+    if (dbResult.rates?.length) {
+      return res.json({ message: dbResult.rates.map((r) => ({ ...r, source: 'winga-cached' })) })
+    }
+    return res.status(503).json({ error: 'Winga rates unavailable', source: 'unavailable' })
+  }
 })
 
 router.get('/rate-sequences', async (_req, res) => {
