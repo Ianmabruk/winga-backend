@@ -16,6 +16,8 @@ const AUTHORIZATION_HEADER = WINGA_API_KEY && WINGA_API_SECRET
   ? `token ${WINGA_API_KEY}:${WINGA_API_SECRET}`
   : ''
 
+const STALE_THRESHOLD_MS = Number(process.env.STALE_THRESHOLD_MS) || (60 * 60 * 1000)
+
 const fetchWingaRates = async (branchName = WINGA_BRANCH) => {
   if (!AUTHORIZATION_HEADER) {
     throw new Error('WINGA_API_KEY and WINGA_API_SECRET are not configured')
@@ -40,11 +42,40 @@ const fetchWingaRates = async (branchName = WINGA_BRANCH) => {
   }
 
   console.log(`[syncService] Winga API returned ${rates.length} rates for branch: ${branchName}`)
+
+  // Stale-data detection: check effective_date_and_time
+  const now = Date.now()
+  const staleEntries = rates.filter((r) => {
+    if (!r.effective_date_and_time) return false
+    const safe = String(r.effective_date_and_time).trim()
+    const iso = safe.includes('T') ? safe : safe.replace(' ', 'T')
+    const d = new Date(iso)
+    if (isNaN(d.getTime())) return false
+    return (now - d.getTime() > STALE_THRESHOLD_MS)
+  })
+
+  if (staleEntries.length > 0) {
+    const oldest = staleEntries
+      .sort((a, b) => {
+        const da = new Date(String(a.effective_date_and_time).trim().replace(' ', 'T'))
+        const db = new Date(String(b.effective_date_and_time).trim().replace(' ', 'T'))
+        return da.getTime() - db.getTime()
+      })[0]
+    console.warn(
+      `[syncService] WARNING: Winga API returned STALE data. ` +
+      `${staleEntries.length}/${rates.length} rates have effective_date_and_time older than 1 hour. ` +
+      `Oldest: ${oldest?.effective_date_and_time}. ` +
+      `This indicates a Frappe cache or unsynced Winga database. ` +
+      `Currency codes affected: ${[...new Set(staleEntries.map((r) => r.currency_code))].join(', ')}`,
+    )
+  }
+
   return rates
 }
 
 let cachedRates = {}
 let cachedRatesAt = 0
+let cachedEffectiveDates = {}
 const CACHE_TTL_MS = 15_000
 
 const syncRates = async () => {
@@ -52,9 +83,10 @@ const syncRates = async () => {
 
   try {
     console.log(`[syncService] Fetching live rates from Winga API`)
-    const { rates, sequences } = await fetchExchangeRates()
+    const { rates, sequences, effectiveDates } = await fetchExchangeRates()
     cachedRates = rates
     cachedRatesAt = Date.now()
+    cachedEffectiveDates = effectiveDates || {}
 
     const formattedRates = Object.entries(rates).map(([code, quote]) => ({
       currency_code: code,
@@ -63,7 +95,7 @@ const syncRates = async () => {
       currency_sequence: sequences[code],
       buying_rate: quote.buy,
       selling_rate: quote.sell,
-      effective_date_and_time: new Date().toISOString().replace('T', ' ').replace('Z', ''),
+      effective_date_and_time: cachedEffectiveDates[code] || new Date().toISOString().replace('T', ' ').replace('Z', ''),
     }))
 
     console.log(`[syncService] Cached ${formattedRates.length} live rates from Winga API`)
@@ -153,9 +185,9 @@ const getLatestRates = async (branchName) => {
         currency_sequence: idx + 1,
         buying_rate: quote.buy,
         selling_rate: quote.sell,
-        effective_date_and_time: new Date().toISOString().replace('T', ' ').replace('Z', ''),
+        effective_date_and_time: cachedEffectiveDates[code] || new Date().toISOString().replace('T', ' ').replace('Z', ''),
         updated_at: new Date().toISOString(),
-        source: 'exchangerate-api',
+        source: 'winga-live',
       }))
       return {
         rates: inMemoryRates,
