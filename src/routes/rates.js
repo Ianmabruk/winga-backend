@@ -1,4 +1,6 @@
 const express = require('express')
+const { authRequired } = require('../middleware/auth')
+const { allowRoles } = require('../middleware/roles')
 const { getRates, calculateExchange } = require('../services/rateEngine')
 const { getLatestRates, fetchWingaRates } = require('../services/syncService')
 const db = require('../config/db')
@@ -49,12 +51,12 @@ router.get('/', async (req, res) => {
       buying_rate: quote.buy,
       selling_rate: quote.sell,
       effective_date_and_time: new Date().toISOString().replace('T', ' ').replace('Z', ''),
-      source: 'exchangerate-api',
+      source: 'winga-live',
     }))
     return res.json({
       rates,
       lastUpdated: new Date().toISOString(),
-      source: 'exchangerate-api',
+      source: 'winga-live',
     })
   }
 
@@ -104,7 +106,11 @@ router.post('/calculate', (req, res) => {
     return res.status(400).json({ message: 'Invalid calculator payload' })
   }
 
-  const fromRate = rates[from][side] || rates[from].sell
+  // Bureau rate semantics:
+  // 'sell' = user sells FROM currency to bureau → bureau uses BUYING rate (what they pay)
+  // 'buy'  = user buys FROM currency from bureau → bureau uses SELLING rate (what they charge)
+  // This matches the frontend ForexCalculatorPanel mode mapping.
+  const fromRate = side === 'sell' ? rates[from].buy : rates[from].sell
   const toRate = rates[to].buy
   const result = calculateExchange({ amount: Number(amount), fromRate, toRate })
 
@@ -134,7 +140,7 @@ router.get('/history', async (req, res) => {
 })
 
 // Admin publishes rates. Persists to the database and returns the stored row(s).
-router.put('/', async (req, res) => {
+router.put('/', authRequired, allowRoles('admin'), async (req, res) => {
   if (!db.isReady()) {
     return res.status(503).json({ message: 'Database not connected - cannot persist rates' })
   }
@@ -160,12 +166,19 @@ router.put('/', async (req, res) => {
       )
       const [result] = await db.query(
         `INSERT INTO exchange_rates
-           (branch_name, currency_code, currency_name, currency_actual_name, currency_sequence, buying_rate, selling_rate, source)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [branchName, code, code, code, 0, buy, sell, 'admin-published'],
+           (branch_name, currency_code, currency_name, currency_actual_name, currency_sequence, buying_rate, selling_rate, source, effective_date_and_time)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [branchName, code, code, code, 0, buy, sell, 'admin-published', new Date().toISOString().replace('T', ' ').replace('Z', '')],
       )
       stored.push({ currency_code: code, buying_rate: buy, selling_rate: sell, id: result.insertId })
     }
+
+    const rateMap = Object.fromEntries(stored.map((s) => [s.currency_code, { buy: s.buying_rate, sell: s.selling_rate }]))
+
+    emitRateUpdate({ type: 'admin-publish', source: 'admin-published', rates: rateMap })
+
+    console.log(`[rates] Admin published ${stored.length} rates for branch: ${branchName}`)
+
     return res.json({ success: true, stored, branch_name: branchName })
   } catch (err) {
     console.error('[rates] publish failed:', err.message)
