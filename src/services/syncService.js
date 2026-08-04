@@ -131,10 +131,15 @@ const syncBranches = async () => {
       timeout: 15000,
     })
 
-    const branches = Array.isArray(response.data?.message) ? response.data.message : []
+    const branchesMessage = response.data?.message
+    const branches = Array.isArray(branchesMessage)
+      ? branchesMessage
+      : branchesMessage && typeof branchesMessage === 'object'
+        ? Object.values(branchesMessage)
+        : []
 
     if (!branches.length) {
-      throw new Error('Winga API returned empty branches array')
+      throw new Error('Winga API returned empty branches')
     }
 
     console.log(`[syncService] Synced ${branches.length} branches from Winga API`)

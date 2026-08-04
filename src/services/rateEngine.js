@@ -71,9 +71,14 @@ const fetchExchangeRates = async (branchName = WINGA_BRANCH) => {
     timeout: 15000,
   })
 
-  const message = Array.isArray(response.data?.message) ? response.data.message : []
-  if (!message.length) {
-    throw new Error('Winga API returned empty rates array')
+  const message = response.data?.message
+  const messageArray = Array.isArray(message)
+    ? message
+    : message && typeof message === 'object'
+      ? Object.values(message)
+      : []
+  if (!messageArray.length) {
+    throw new Error('Winga API returned empty rates — message is not an array or object with numeric keys')
   }
 
   const mapped = {}
