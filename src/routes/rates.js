@@ -5,6 +5,13 @@ const db = require('../config/db')
 
 const router = express.Router()
 
+router.use((req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+  res.setHeader('Pragma', 'no-cache')
+  res.setHeader('Expires', '0')
+  next()
+})
+
 const rateUpdateListeners = []
 
 const onRateUpdate = (fn) => rateUpdateListeners.push(fn)
@@ -12,8 +19,13 @@ const emitRateUpdate = (data) => rateUpdateListeners.forEach((fn) => fn(data))
 
 const BRANCH_NAME = 'HEAD OFFICE'
 
+const resolveBranch = (req) => {
+  const raw = req.query.branch_name || req.query.branch || BRANCH_NAME
+  return String(raw || '').trim() || BRANCH_NAME
+}
+
 router.get('/', async (req, res) => {
-  const branchName = req.query.branch_name || BRANCH_NAME
+  const branchName = resolveBranch(req)
 
   const result = await getLatestRates(branchName)
 
@@ -68,17 +80,14 @@ router.get('/branches', async (_req, res) => {
 })
 
 router.get('/live', async (req, res) => {
-  const branchName = req.query.branch_name || BRANCH_NAME
+  const branchName = resolveBranch(req)
+  console.log('[rates] /live called for branch:', JSON.stringify(branchName), 'raw query:', JSON.stringify(req.query))
   try {
     const rates = await fetchWingaRates(branchName)
     const message = rates.map((r) => ({ ...r, source: 'winga-live' }))
     return res.json({ message })
   } catch (err) {
     console.error('[rates] live fetch failed:', err.message)
-    const dbResult = await getLatestRates(branchName)
-    if (dbResult.rates?.length) {
-      return res.json({ message: dbResult.rates.map((r) => ({ ...r, source: 'winga-cached' })) })
-    }
     return res.status(503).json({ error: 'Winga rates unavailable', source: 'unavailable' })
   }
 })
@@ -107,7 +116,7 @@ router.get('/history', async (req, res) => {
     return res.json({ history: [] })
   }
   try {
-    const branchName = req.query.branch_name || BRANCH_NAME
+    const branchName = resolveBranch(req)
     const [rows] = await db.query(
       `SELECT branch_name, currency_code, currency_name, currency_actual_name, currency_sequence,
               buying_rate, selling_rate, source, updated_at, effective_date_time

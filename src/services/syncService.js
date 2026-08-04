@@ -26,6 +26,9 @@ const fetchWingaRates = async (branchName = WINGA_BRANCH) => {
     headers: {
       Authorization: AUTHORIZATION_HEADER,
       Accept: 'application/json',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      Pragma: 'no-cache',
+      Expires: '0',
     },
     timeout: 15000,
   })
@@ -41,14 +44,17 @@ const fetchWingaRates = async (branchName = WINGA_BRANCH) => {
 }
 
 let cachedRates = {}
+let cachedRatesAt = 0
+const CACHE_TTL_MS = 15_000
 
 const syncRates = async () => {
   const startTime = Date.now()
 
   try {
-    console.log(`[syncService] Fetching rates from ExchangeRate-API`)
+    console.log(`[syncService] Fetching live rates from Winga API`)
     const { rates, sequences } = await fetchExchangeRates()
     cachedRates = rates
+    cachedRatesAt = Date.now()
 
     const formattedRates = Object.entries(rates).map(([code, quote]) => ({
       currency_code: code,
@@ -60,9 +66,9 @@ const syncRates = async () => {
       effective_date_and_time: new Date().toISOString().replace('T', ' ').replace('Z', ''),
     }))
 
-    console.log(`[syncService] Cached ${formattedRates.length} rates from ExchangeRate-API`)
+    console.log(`[syncService] Cached ${formattedRates.length} live rates from Winga API`)
 
-    return { success: true, ratesCount: formattedRates.length, duration: Date.now() - startTime, source: 'exchangerate-api' }
+    return { success: true, ratesCount: formattedRates.length, duration: Date.now() - startTime, source: 'winga' }
   } catch (err) {
     console.error(`[syncService] Sync failed: ${err.message}`)
     return { success: false, error: err.message, duration: Date.now() - startTime }
@@ -86,6 +92,9 @@ const syncBranches = async () => {
       headers: {
         Authorization: AUTHORIZATION_HEADER,
         Accept: 'application/json',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        Pragma: 'no-cache',
+        Expires: '0',
       },
       timeout: 15000,
     })
@@ -136,7 +145,7 @@ const getLatestRates = async (branchName) => {
       }
     }
 
-    if (Object.keys(cachedRates).length > 0) {
+    if (Object.keys(cachedRates).length > 0 && Date.now() - cachedRatesAt < CACHE_TTL_MS) {
       const inMemoryRates = Object.entries(cachedRates).map(([code, quote], idx) => ({
         currency_code: code,
         currency_name: code,

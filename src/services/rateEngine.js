@@ -37,7 +37,13 @@ const fetchExchangeRates = async (branchName = WINGA_BRANCH) => {
   const auth = `token ${WINGA_API_KEY}:${WINGA_API_SECRET}`
 
   const response = await axios.get(url, {
-    headers: { Authorization: auth, Accept: 'application/json' },
+    headers: {
+      Authorization: auth,
+      Accept: 'application/json',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      Pragma: 'no-cache',
+      Expires: '0',
+    },
     timeout: 15000,
   })
 
@@ -70,7 +76,7 @@ const refreshFromProvider = async (branchName = 'HEAD OFFICE') => {
   try {
     const { rates, sequences } = await fetchExchangeRates(branchName)
     currentRates = rates
-    await persistRates(currentRates, 'exchangerate-api', branchName, sequences)
+    await persistRates(currentRates, 'winga', branchName, sequences)
     return currentRates
   } catch (err) {
     console.error('[rateEngine] Exchange rate fetch failed:', err.message)

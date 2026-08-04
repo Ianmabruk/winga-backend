@@ -43,6 +43,15 @@ app.use(cors(corsOptions))
 app.use(express.json({ limit: '1mb' }))
 app.use(cookieParser())
 app.use(attachAuditContext)
+
+app.use('/api', (req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+  res.setHeader('Pragma', 'no-cache')
+  res.setHeader('Expires', '0')
+  res.setHeader('Vary', 'Origin')
+  next()
+})
+
 app.use('/api', limiter)
 
 if (process.env.NODE_ENV === 'production') {
