@@ -35,10 +35,15 @@ const fetchWingaRates = async (branchName = WINGA_BRANCH) => {
     timeout: 15000,
   })
 
-  const rates = Array.isArray(response.data?.message) ? response.data.message : []
+  const ratesMessage = response.data?.message
+  const rates = Array.isArray(ratesMessage)
+    ? ratesMessage
+    : ratesMessage && typeof ratesMessage === 'object'
+      ? Object.values(ratesMessage)
+      : []
 
   if (!rates.length) {
-    throw new Error('Winga API returned empty rates array')
+    throw new Error('Winga API returned empty rates — message is not an array or object with numeric keys')
   }
 
   console.log(`[syncService] Winga API returned ${rates.length} rates for branch: ${branchName}`)
@@ -169,7 +174,7 @@ const getLatestRates = async (branchName) => {
                 buying_rate, selling_rate, source, updated_at, effective_date_and_time
          FROM exchange_rates
          WHERE branch_name = ?
-         ORDER BY currency_sequence ASC, currency_code ASC`,
+         ORDER BY currency_sequence ASC, currency_code ASC, effective_date_and_time DESC`,
         [branchName || WINGA_BRANCH],
       )
       if (Array.isArray(rows) && rows.length > 0) {

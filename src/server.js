@@ -117,7 +117,7 @@ app.get('/api/rates/public', async (_req, res) => {
       return res.json({
         rates: formatted,
         lastUpdated: new Date().toISOString(),
-        source: 'exchangerate-api',
+        source: 'winga-live',
       })
     }
     return res.json({
@@ -140,7 +140,7 @@ app.get('/api/rates/public', async (_req, res) => {
     return res.json({
       rates: formatted,
       lastUpdated: new Date().toISOString(),
-      source: 'exchangerate-api',
+      source: 'winga-live',
     })
   }
 })
@@ -195,13 +195,13 @@ async function broadcastRates() {
     }
     const rates = getRates()
     if (Object.keys(rates).length > 0) {
-      io.emit('rates:update', { rates, source: 'exchangerate-api' })
+      io.emit('rates:update', { rates, source: 'winga-live' })
     }
   } catch (err) {
     console.error('[socket] Broadcast failed:', err.message)
     const rates = getRates()
     if (Object.keys(rates).length > 0) {
-      io.emit('rates:update', { rates, source: 'exchangerate-api' })
+      io.emit('rates:update', { rates, source: 'winga-live' })
     }
   }
 }

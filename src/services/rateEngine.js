@@ -14,9 +14,28 @@ const persistRates = async (rates, source = 'provider', branchName = 'HEAD OFFIC
 
   const insertQuery =
     'INSERT INTO exchange_rates (branch_name, currency_code, currency_name, currency_actual_name, currency_sequence, buying_rate, selling_rate, source, effective_date_and_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  const deleteQuery =
+    'DELETE FROM exchange_rates WHERE branch_name = ? AND currency_code = ?'
 
   try {
     for (const [code, quote] of Object.entries(rates)) {
+      // Check existing record — do NOT overwrite newer DB data with stale API data
+      const [existing] = await db.query(
+        'SELECT effective_date_and_time FROM exchange_rates WHERE branch_name = ? AND currency_code = ? ORDER BY effective_date_and_time DESC LIMIT 1',
+        [branchName, code],
+      )
+      const existingEff = existing[0]?.effective_date_and_time
+      if (existingEff && effectiveDates[code]) {
+        const existingDate = parseEffectiveDate(existingEff)
+        const incomingDate = parseEffectiveDate(effectiveDates[code])
+        if (existingDate && incomingDate && existingDate >= incomingDate) {
+          console.log(`[rateEngine] Skipping ${code} for ${branchName}: DB effective_date (${existingEff}) is newer than API (${effectiveDates[code]})`)
+          continue
+        }
+      }
+
+      // Delete old records for this currency+branch, then insert fresh
+      await db.query(deleteQuery, [branchName, code])
       await db.query(insertQuery, [
         branchName,
         code,
