@@ -3,7 +3,7 @@ const { authRequired } = require('../middleware/auth')
 const { allowRoles } = require('../middleware/roles')
 const adminService = require('../services/adminService')
 const { logAudit } = require('../services/auditService')
-const { syncRates, syncBranches, getLastSyncStatus, getLatestRates } = require('../services/syncService')
+const { syncRates, syncBranches, getLastSyncStatus, getLatestRates, diagnosticsWingaRates, diagnosticsWingaBranches } = require('../services/syncService')
 const db = require('../config/db')
 
 const router = express.Router()
@@ -189,6 +189,27 @@ router.get('/diagnostics', async (_req, res) => {
 router.post('/sync/rates', csrfProtection, async (_req, res) => {
   const result = await syncRates()
   res.json(result)
+})
+
+router.get('/diagnostics/winga-rates', async (req, res) => {
+  try {
+    const branchName = req.query.branch_name || process.env.WINGA_BRANCH || 'HEAD OFFICE'
+    const result = await diagnosticsWingaRates(branchName)
+    res.json(result)
+  } catch (err) {
+    console.error('[admin-diagnostics] Winga rates test failed:', err.message)
+    res.status(500).json({ error: err.message, api: 'Winga Exchange Rates' })
+  }
+})
+
+router.get('/diagnostics/winga-branches', async (_req, res) => {
+  try {
+    const result = await diagnosticsWingaBranches()
+    res.json(result)
+  } catch (err) {
+    console.error('[admin-diagnostics] Winga branches test failed:', err.message)
+    res.status(500).json({ error: err.message, api: 'Winga Branches' })
+  }
 })
 
 module.exports = router

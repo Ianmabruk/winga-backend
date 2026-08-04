@@ -203,10 +203,146 @@ const getLatestRates = async (branchName) => {
   }
 }
 
+const diagnosticsWingaRates = async (branchName = WINGA_BRANCH) => {
+  const startTime = Date.now()
+  let error = null
+  let status = null
+  let statusText = null
+  let responseHeaders = {}
+  let requestUrl = null
+  let data = null
+
+  try {
+    if (!AUTHORIZATION_HEADER) {
+      throw new Error('WINGA_API_KEY and WINGA_API_SECRET are not configured')
+    }
+
+    const response = await axios.get(WINGA_RATES_ENDPOINT, {
+      params: { branch_name: branchName },
+      headers: {
+        Authorization: AUTHORIZATION_HEADER,
+        Accept: 'application/json',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        Pragma: 'no-cache',
+        Expires: '0',
+      },
+      timeout: 15000,
+      validateStatus: () => true,
+    })
+
+    status = response.status
+    statusText = response.statusText
+    responseHeaders = response.headers || {}
+    requestUrl = `${WINGA_RATES_ENDPOINT}?branch_name=${encodeURIComponent(branchName)}`
+    data = response.data
+
+    if (status !== 200) {
+      error = `HTTP ${status}: ${JSON.stringify(data).slice(0, 500)}`
+    }
+  } catch (err) {
+    error = err.message
+    if (err.response) {
+      status = err.response.status
+      statusText = err.response.statusText
+      responseHeaders = err.response.headers || {}
+    }
+  }
+
+  const responseTime = Date.now() - startTime
+
+  return {
+    api: 'Winga Exchange Rates',
+    endpoint: 'get_exchange_rates',
+    requestUrl,
+    requestHeaders: {
+      Authorization: AUTHORIZATION_HEADER ? `${AUTHORIZATION_HEADER.slice(0, 20)}...` : '(not configured)',
+      Accept: 'application/json',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      Pragma: 'no-cache',
+      Expires: '0',
+    },
+    responseStatus: status,
+    responseStatusText: statusText,
+    responseTimeMs: responseTime,
+    responseHeaders,
+    branchRequested: branchName,
+    data,
+    error,
+  }
+}
+
+const diagnosticsWingaBranches = async () => {
+  const startTime = Date.now()
+  let error = null
+  let status = null
+  let statusText = null
+  let responseHeaders = {}
+  let requestUrl = null
+  let data = null
+
+  try {
+    if (!AUTHORIZATION_HEADER) {
+      throw new Error('WINGA_API_KEY and WINGA_API_SECRET are not configured')
+    }
+
+    const response = await axios.get(WINGA_BRANCHES_ENDPOINT, {
+      headers: {
+        Authorization: AUTHORIZATION_HEADER,
+        Accept: 'application/json',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        Pragma: 'no-cache',
+        Expires: '0',
+      },
+      timeout: 15000,
+      validateStatus: () => true,
+    })
+
+    status = response.status
+    statusText = response.statusText
+    responseHeaders = response.headers || {}
+    requestUrl = WINGA_BRANCHES_ENDPOINT
+    data = response.data
+
+    if (status !== 200) {
+      error = `HTTP ${status}: ${JSON.stringify(data).slice(0, 500)}`
+    }
+  } catch (err) {
+    error = err.message
+    if (err.response) {
+      status = err.response.status
+      statusText = err.response.statusText
+      responseHeaders = err.response.headers || {}
+    }
+  }
+
+  const responseTime = Date.now() - startTime
+
+  return {
+    api: 'Winga Branches',
+    endpoint: 'get_branches',
+    requestUrl,
+    requestHeaders: {
+      Authorization: AUTHORIZATION_HEADER ? `${AUTHORIZATION_HEADER.slice(0, 20)}...` : '(not configured)',
+      Accept: 'application/json',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      Pragma: 'no-cache',
+      Expires: '0',
+    },
+    responseStatus: status,
+    responseStatusText: statusText,
+    responseTimeMs: responseTime,
+    responseHeaders,
+    data,
+    error,
+  }
+}
+
 module.exports = {
   syncRates,
   syncBranches,
   getLastSyncStatus,
   getLatestRates,
   fetchWingaRates,
+  diagnosticsWingaRates,
+  diagnosticsWingaBranches,
 }
