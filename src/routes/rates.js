@@ -7,13 +7,6 @@ const db = require('../config/db')
 
 const router = express.Router()
 
-router.use((req, res, next) => {
-  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
-  res.setHeader('Pragma', 'no-cache')
-  res.setHeader('Expires', '0')
-  next()
-})
-
 const rateUpdateListeners = []
 
 const onRateUpdate = (fn) => rateUpdateListeners.push(fn)
@@ -24,6 +17,18 @@ const BRANCH_NAME = 'HEAD OFFICE'
 const resolveBranch = (req) => {
   const raw = req.query.branch_name || req.query.branch || BRANCH_NAME
   return String(raw || '').trim() || BRANCH_NAME
+}
+
+const formatDuration = (ms) => {
+  if (ms == null || ms < 0) return null
+  const d = Math.floor(ms / 86400000)
+  const h = Math.floor((ms % 86400000) / 3600000)
+  const m = Math.floor((ms % 3600000) / 60000)
+  const s = Math.floor((ms % 60000) / 1000)
+  if (d > 0) return `${d}d ${h}h ${m}m`
+  if (h > 0) return `${h}h ${m}m ${s}s`
+  if (m > 0) return `${m}m ${s}s`
+  return `${s}s`
 }
 
 router.get('/', async (req, res) => {
@@ -85,11 +90,80 @@ router.get('/live', async (req, res) => {
   const branchName = resolveBranch(req)
   console.log('[rates] /live called for branch:', JSON.stringify(branchName), 'raw query:', JSON.stringify(req.query))
   try {
-    const rates = await fetchWingaRates(branchName)
+    const { rates, effectiveDates, validation } = await fetchWingaRates(branchName)
+
+    if (validation.isStale) {
+      console.warn(
+        `[rates] /live rejecting stale Winga data. Reason: ${validation.reason}. ` +
+          `Provider timestamp: ${validation.newestDate ? validation.newestDate.toISOString() : 'unknown'}, ` +
+          `Age: ${validation.ageMs != null ? formatDuration(validation.ageMs) : 'unknown'}`,
+      )
+
+      const dbResult = await getLatestRates(branchName)
+      if (dbResult.rates?.length) {
+        return res.json({
+          message: dbResult.rates,
+          stale: true,
+          provider: 'Winga',
+          providerTimestamp: validation.newestDate ? validation.newestDate.toISOString() : null,
+          lastVerifiedDatabaseTimestamp: dbResult.lastUpdated,
+          staleReason: validation.reason,
+          rates: dbResult.rates,
+        })
+      }
+
+      const inMemoryRates = getRates()
+      if (Object.keys(inMemoryRates).length > 0) {
+        const formatted = Object.entries(inMemoryRates).map(([code, quote], idx) => ({
+          currency_code: code,
+          currency_name: code,
+          currency_actual_name: code,
+          currency_sequence: idx + 1,
+          buying_rate: quote.buy,
+          selling_rate: quote.sell,
+          effective_date_and_time: effectiveDates[code] || new Date().toISOString().replace('T', ' ').replace('Z', ''),
+          source: 'winga-live',
+        }))
+        return res.json({
+          message: formatted,
+          stale: true,
+          provider: 'Winga',
+          providerTimestamp: validation.newestDate ? validation.newestDate.toISOString() : null,
+          lastVerifiedDatabaseTimestamp: null,
+          staleReason: validation.reason,
+          rates: formatted,
+        })
+      }
+
+      return res.status(503).json({
+        error: 'Winga rates unavailable and no verified database rates found',
+        source: 'unavailable',
+        stale: true,
+        staleReason: validation.reason,
+      })
+    }
+
     const message = rates.map((r) => ({ ...r, source: 'winga-live' }))
-    return res.json({ message })
+    return res.json({
+      message,
+      stale: false,
+      provider: 'Winga',
+      providerTimestamp: validation.newestDate ? validation.newestDate.toISOString() : null,
+      rates,
+    })
   } catch (err) {
     console.error('[rates] live fetch failed:', err.message)
+    const dbResult = await getLatestRates(branchName)
+    if (dbResult.rates?.length) {
+      return res.json({
+        message: dbResult.rates.map((r) => ({ ...r, source: 'database-verified' })),
+        stale: false,
+        provider: 'Winga',
+        providerTimestamp: null,
+        lastVerifiedDatabaseTimestamp: dbResult.lastUpdated,
+        rates: dbResult.rates,
+      })
+    }
     return res.status(503).json({ error: 'Winga rates unavailable', source: 'unavailable' })
   }
 })

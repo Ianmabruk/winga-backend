@@ -1,5 +1,5 @@
 const axios = require('axios')
-const { fetchExchangeRates } = require('./rateEngine')
+const { persistRates, setCurrentRates } = require('./rateEngine')
 const db = require('../config/db')
 
 const WINGA_API_KEY = process.env.WINGA_API_KEY
@@ -17,6 +17,43 @@ const AUTHORIZATION_HEADER = WINGA_API_KEY && WINGA_API_SECRET
   : ''
 
 const STALE_THRESHOLD_MS = Number(process.env.STALE_THRESHOLD_MS) || (60 * 60 * 1000)
+
+const formatDuration = (ms) => {
+  if (ms == null || ms < 0) return 'unknown'
+  const d = Math.floor(ms / 86400000)
+  const h = Math.floor((ms % 86400000) / 3600000)
+  const m = Math.floor((ms % 3600000) / 60000)
+  const s = Math.floor((ms % 60000) / 1000)
+  if (d > 0) return `${d}d ${h}h ${m}m`
+  if (h > 0) return `${h}h ${m}m ${s}s`
+  if (m > 0) return `${m}m ${s}s`
+  return `${s}s`
+}
+
+const validateProviderTimestamp = (effectiveDates) => {
+  const now = Date.now()
+  const parsed = Object.values(effectiveDates)
+    .map(parseEffectiveDate)
+    .filter((d) => d !== null)
+  if (!parsed.length) return { isStale: true, reason: 'No valid effective_date_and_time found in provider response', oldestDate: null, newestDate: null, ageMs: null }
+
+  parsed.sort((a, b) => a.getTime() - b.getTime())
+  const oldestDate = parsed[0]
+  const newestDate = parsed[parsed.length - 1]
+  const ageMs = now - newestDate.getTime()
+
+  if (ageMs > STALE_THRESHOLD_MS) {
+    return {
+      isStale: true,
+      reason: `Provider effective_date_and_time (${newestDate.toISOString().replace('T', ' ').replace('Z', '')}) is ${formatDuration(ageMs)} old, exceeding threshold of ${formatDuration(STALE_THRESHOLD_MS)}`,
+      oldestDate,
+      newestDate,
+      ageMs,
+    }
+  }
+
+  return { isStale: false, reason: null, oldestDate, newestDate, ageMs }
+}
 
 const fetchWingaRates = async (branchName = WINGA_BRANCH) => {
   if (!AUTHORIZATION_HEADER) {
@@ -46,9 +83,13 @@ const fetchWingaRates = async (branchName = WINGA_BRANCH) => {
     throw new Error('Winga API returned empty rates — message is not an array or object with numeric keys')
   }
 
-  console.log(`[syncService] Winga API returned ${rates.length} rates for branch: ${branchName}`)
+  const effectiveDates = {}
+  for (const r of rates) {
+    if (r.currency_code && r.effective_date_and_time) {
+      effectiveDates[String(r.currency_code).toUpperCase()] = r.effective_date_and_time
+    }
+  }
 
-  // Stale-data detection: check effective_date_and_time
   const now = Date.now()
   const staleEntries = rates.filter((r) => {
     if (!r.effective_date_and_time) return false
@@ -59,6 +100,10 @@ const fetchWingaRates = async (branchName = WINGA_BRANCH) => {
     return (now - d.getTime() > STALE_THRESHOLD_MS)
   })
 
+  console.log(`[syncService] Winga API returned ${rates.length} rates for branch: ${branchName}`)
+
+  const validation = validateProviderTimestamp(effectiveDates)
+
   if (staleEntries.length > 0) {
     const oldest = staleEntries
       .sort((a, b) => {
@@ -68,14 +113,15 @@ const fetchWingaRates = async (branchName = WINGA_BRANCH) => {
       })[0]
     console.warn(
       `[syncService] WARNING: Winga API returned STALE data. ` +
-      `${staleEntries.length}/${rates.length} rates have effective_date_and_time older than 1 hour. ` +
-      `Oldest: ${oldest?.effective_date_and_time}. ` +
-      `This indicates a Frappe cache or unsynced Winga database. ` +
-      `Currency codes affected: ${[...new Set(staleEntries.map((r) => r.currency_code))].join(', ')}`,
+        `${staleEntries.length}/${rates.length} rates have effective_date_and_time older than ${formatDuration(STALE_THRESHOLD_MS)}. ` +
+        `Oldest: ${oldest?.effective_date_and_time}. ` +
+        `This indicates a Frappe cache or unsynced Winga database. ` +
+        `Currency codes affected: ${[...new Set(staleEntries.map((r) => r.currency_code))].join(', ')}`,
     )
   }
 
-  return rates
+  recordFetchSuccess(rates.length, effectiveDates)
+  return { rates, effectiveDates, validation }
 }
 
 let cachedRates = {}
@@ -83,15 +129,89 @@ let cachedRatesAt = 0
 let cachedEffectiveDates = {}
 const CACHE_TTL_MS = 15_000
 
+let lastWingaFetchAt = 0
+let lastWingaFetchError = null
+let lastWingaFetchCount = 0
+let lastWingaFetchEffectiveDates = {}
+
+let lastSuccessfulSyncAt = 0
+let lastRejectedSyncAt = 0
+let lastSyncDecision = 'pending'
+let lastStaleReason = null
+let lastProviderTimestamp = null
+
+const recordFetchSuccess = (count, effectiveDates = {}) => {
+  lastWingaFetchAt = Date.now()
+  lastWingaFetchError = null
+  lastWingaFetchCount = count
+  lastWingaFetchEffectiveDates = effectiveDates
+}
+
+const recordFetchError = (error) => {
+  lastWingaFetchError = error.message || String(error)
+}
+
+const parseEffectiveDate = (dateStr) => {
+  if (!dateStr) return null
+  try {
+    const safe = String(dateStr).trim()
+    const iso = safe.includes('T') ? safe : safe.replace(' ', 'T')
+    const d = new Date(iso)
+    if (isNaN(d.getTime())) return null
+    return d
+  } catch {
+    return null
+  }
+}
+
 const syncRates = async () => {
   const startTime = Date.now()
 
   try {
     console.log(`[syncService] Fetching live rates from Winga API`)
-    const { rates, sequences, effectiveDates } = await fetchExchangeRates()
+    const { rates, sequences, effectiveDates, validation } = await fetchWingaRates()
+
+    lastProviderTimestamp = validation.newestDate
+    const now = Date.now()
+
+    if (validation.isStale) {
+      lastRejectedSyncAt = now
+      lastSyncDecision = 'rejected-stale'
+      lastStaleReason = validation.reason
+
+      console.warn(
+        `[syncService] SYNC DECISION: Rejected\n` +
+          `  Provider timestamp: ${validation.newestDate ? validation.newestDate.toISOString() : '(none)'}\n` +
+          `  Current time: ${new Date(now).toISOString()}\n` +
+          `  Age: ${validation.newestDate ? formatDuration(now - validation.newestDate.getTime()) : 'unknown'}\n` +
+          `  Database timestamp: ${lastSuccessfulSyncAt ? new Date(lastSuccessfulSyncAt).toISOString() : '(never synced)'}\n` +
+          `  Reason: ${validation.reason}\n` +
+          `  Action: Keeping latest verified database rates. In-memory cache unchanged.`,
+      )
+
+      recordFetchSuccess(rates.reduce((acc, r) => { acc[r.currency_code] = true; return acc }, {}), effectiveDates)
+      return {
+        success: true,
+        stale: true,
+        provider: 'Winga',
+        providerTimestamp: validation.newestDate ? validation.newestDate.toISOString() : null,
+        lastVerifiedDatabaseTimestamp: lastSuccessfulSyncAt ? new Date(lastSuccessfulSyncAt).toISOString() : null,
+        rates: {},
+        duration: Date.now() - startTime,
+        source: 'database-kept',
+        staleReason: validation.reason,
+        decision: 'rejected-stale',
+      }
+    }
+
+    lastProviderTimestamp = validation.newestDate
+
     cachedRates = rates
     cachedRatesAt = Date.now()
     cachedEffectiveDates = effectiveDates || {}
+    setCurrentRates(rates)
+
+    recordFetchSuccess(Object.keys(rates).length, effectiveDates)
 
     const formattedRates = Object.entries(rates).map(([code, quote]) => ({
       currency_code: code,
@@ -105,8 +225,27 @@ const syncRates = async () => {
 
     console.log(`[syncService] Cached ${formattedRates.length} live rates from Winga API`)
 
-    return { success: true, ratesCount: formattedRates.length, duration: Date.now() - startTime, source: 'winga' }
+    console.log(
+      `[syncService] SYNC DECISION: Accepted\n` +
+        `  Provider timestamp: ${validation.newestDate ? validation.newestDate.toISOString() : '(none)'}\n` +
+        `  Current time: ${new Date(now).toISOString()}\n` +
+        `  Age: ${validation.newestDate ? formatDuration(now - validation.newestDate.getTime()) : 'unknown'}\n` +
+        `  Database timestamp: ${lastSuccessfulSyncAt ? new Date(lastSuccessfulSyncAt).toISOString() : '(never synced)'}\n` +
+        `  Action: Updating database and in-memory cache.`,
+    )
+
+    if (db.isReady()) {
+      await persistRates(rates, 'winga', WINGA_BRANCH, sequences, effectiveDates)
+      console.log(`[syncService] Persisted ${formattedRates.length} rates to database`)
+    }
+
+    lastSuccessfulSyncAt = Date.now()
+    lastSyncDecision = 'accepted'
+    lastStaleReason = null
+
+    return { success: true, ratesCount: formattedRates.length, duration: Date.now() - startTime, source: 'winga', stale: false, decision: 'accepted' }
   } catch (err) {
+    recordFetchError(err)
     console.error(`[syncService] Sync failed: ${err.message}`)
     return { success: false, error: err.message, duration: Date.now() - startTime }
   }
@@ -164,6 +303,61 @@ const syncBranches = async () => {
 
 const getLastSyncStatus = async () => {
   return []
+}
+
+const getSyncState = () => {
+  const now = Date.now()
+  const oldestEffectiveDate = Object.values(lastWingaFetchEffectiveDates).sort().shift()
+  const newestEffectiveDate = Object.values(lastWingaFetchEffectiveDates).sort().pop()
+  const oldestEffDate = oldestEffectiveDate ? parseEffectiveDate(oldestEffectiveDate) : null
+  const newestEffDate = newestEffectiveDate ? parseEffectiveDate(newestEffectiveDate) : null
+
+  return {
+    lastWingaFetchAt: lastWingaFetchAt ? new Date(lastWingaFetchAt).toISOString() : null,
+    lastWingaFetchError: lastWingaFetchError || null,
+    lastWingaFetchRateCount: lastWingaFetchCount,
+    lastWingaFetchAgeMs: lastWingaFetchAt ? now - lastWingaFetchAt : null,
+
+    providerTimestamp: lastProviderTimestamp ? lastProviderTimestamp.toISOString() : null,
+    providerAgeMs: lastProviderTimestamp ? now - lastProviderTimestamp.getTime() : null,
+
+    lastSuccessfulSyncAt: lastSuccessfulSyncAt ? new Date(lastSuccessfulSyncAt).toISOString() : null,
+    lastSuccessfulSyncAgeMs: lastSuccessfulSyncAt ? now - lastSuccessfulSyncAt : null,
+    lastRejectedSyncAt: lastRejectedSyncAt ? new Date(lastRejectedSyncAt).toISOString() : null,
+    lastRejectedSyncAgeMs: lastRejectedSyncAt ? now - lastRejectedSyncAt : null,
+    lastSyncDecision,
+    staleReason: lastStaleReason,
+
+    oldestEffectiveDateAndTime: oldestEffectiveDate || null,
+    newestEffectiveDateAndTime: newestEffectiveDate || null,
+    oldestEffectiveAgeMs: oldestEffDate ? now - oldestEffDate.getTime() : null,
+    newestEffectiveAgeMs: newestEffDate ? now - newestEffDate.getTime() : null,
+
+    inMemoryCacheAt: cachedRatesAt ? new Date(cachedRatesAt).toISOString() : null,
+    inMemoryCacheAgeMs: cachedRatesAt ? now - cachedRatesAt : null,
+    inMemoryCacheTtlMs: CACHE_TTL_MS,
+    inMemoryCacheFresh: cachedRatesAt ? (now - cachedRatesAt < CACHE_TTL_MS) : false,
+    inMemoryRateCount: Object.keys(cachedRates).length,
+
+    staleThresholdMs: STALE_THRESHOLD_MS,
+    wingaCredentialsConfigured: Boolean(AUTHORIZATION_HEADER),
+  }
+}
+
+const getLatestDbUpdate = async () => {
+  if (!db.isReady()) return null
+  try {
+    const [rows] = await db.query(
+      `SELECT MAX(updated_at) AS latest, MAX(effective_date_and_time) AS latestEffective, COUNT(*) AS total,
+              SUM(CASE WHEN source = 'admin-published' THEN 1 ELSE 0 END) AS adminCount,
+              SUM(CASE WHEN source = 'winga' THEN 1 ELSE 0 END) AS wingaCount
+       FROM exchange_rates`,
+    )
+    return rows[0]
+  } catch (err) {
+    console.error('[syncService] Failed to query DB update time:', err.message)
+    return null
+  }
 }
 
 const getLatestRates = async (branchName) => {
@@ -355,4 +549,6 @@ module.exports = {
   fetchWingaRates,
   diagnosticsWingaRates,
   diagnosticsWingaBranches,
+  getSyncState,
+  getLatestDbUpdate,
 }

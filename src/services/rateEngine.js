@@ -58,6 +58,10 @@ let currentRates = {}
 
 const getRates = () => currentRates
 
+const setCurrentRates = (rates) => {
+  currentRates = rates
+}
+
 const parseEffectiveDate = (dateStr) => {
   if (!dateStr) return null
   try {
@@ -166,8 +170,29 @@ const fetchExchangeRates = async (branchName = WINGA_BRANCH) => {
 const refreshFromProvider = async (branchName = 'HEAD OFFICE') => {
   try {
     const { rates, sequences, effectiveDates } = await fetchExchangeRates(branchName)
+
+    const parsedDates = Object.values(effectiveDates).map(parseEffectiveDate).filter((d) => d !== null)
+    const now = Date.now()
+    const newestDate = parsedDates.sort((a, b) => a.getTime() - b.getTime()).pop()
+    const ageMs = newestDate ? now - newestDate.getTime() : null
+
+    if (ageMs != null && ageMs > STALE_THRESHOLD_MS) {
+      console.warn(
+        `[rateEngine] refreshFromProvider: REJECTED stale data. ` +
+          `Newest effective_date: ${newestDate.toISOString().replace('T', ' ').replace('Z', '')}. ` +
+          `Age: ${formatDuration(ageMs)}, threshold: ${formatDuration(STALE_THRESHOLD_MS)}. ` +
+          `Keeping existing rates.`,
+      )
+      return currentRates
+    }
+
     currentRates = rates
     await persistRates(currentRates, 'winga', branchName, sequences, effectiveDates)
+    console.log(
+      `[rateEngine] refreshFromProvider: ACCEPTED fresh data. ` +
+        `Newest effective_date: ${newestDate ? newestDate.toISOString().replace('T', ' ').replace('Z', '') : 'unknown'}. ` +
+        `Age: ${ageMs != null ? formatDuration(ageMs) : 'unknown'}.`,
+    )
     return currentRates
   } catch (err) {
     console.error('[rateEngine] Exchange rate fetch failed:', err.message)
@@ -191,4 +216,4 @@ const calculateExchange = ({ amount, fromRate, toRate }) => {
   }
 }
 
-module.exports = { getRates, refreshFromProvider, calculateExchange, persistRates, fetchExchangeRates }
+module.exports = { getRates, setCurrentRates, refreshFromProvider, calculateExchange, persistRates, fetchExchangeRates }

@@ -1,6 +1,7 @@
 require('dotenv').config()
 
 const http = require('http')
+const crypto = require('crypto')
 const express = require('express')
 const cors = require('cors')
 const helmet = require('helmet')
@@ -13,8 +14,8 @@ const authRoutes = require('./routes/auth')
 const analyticsRoutes = require('./routes/analytics')
 const adminRoutes = require('./routes/admin')
 const { attachAuditContext } = require('./middleware/audit')
-const { syncRates, getLatestRates, fetchWingaRates, syncBranches } = require('./services/syncService')
-const { getRates, refreshFromProvider } = require('./services/rateEngine')
+const { syncRates, getLatestRates, fetchWingaRates, syncBranches, getSyncState, getLatestDbUpdate } = require('./services/syncService')
+const { getRates } = require('./services/rateEngine')
 
 const app = express()
 const server = http.createServer(app)
@@ -48,7 +49,15 @@ app.use('/api', (req, res, next) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
   res.setHeader('Pragma', 'no-cache')
   res.setHeader('Expires', '0')
+  res.setHeader('Surrogate-Control', 'no-store')
   res.setHeader('Vary', 'Origin')
+  res.setHeader('X-Request-ID', req.auditContext?.requestId || crypto.randomUUID())
+
+  const originalJson = res.json.bind(res)
+  res.json = function (body) {
+    res.setHeader('X-Generated-At', new Date().toISOString())
+    return originalJson(body)
+  }
   next()
 })
 
@@ -75,7 +84,7 @@ app.use('/api/analytics', analyticsRoutes)
 app.use('/api/admin', adminRoutes)
 
 rateRoutes.onRateUpdate((data) => {
-  io.emit('rates:update', data)
+  io.emit('rates:update', { ...data, generatedAt: new Date().toISOString() })
 })
 
 app.get('/health', (_req, res) => {
@@ -182,6 +191,122 @@ app.get('/api/winga-branches.php', async (_req, res) => {
   }
 })
 
+function formatDuration(ms) {
+  if (ms == null || ms < 0) return null
+  const d = Math.floor(ms / 86400000)
+  const h = Math.floor((ms % 86400000) / 3600000)
+  const m = Math.floor((ms % 3600000) / 60000)
+  const s = Math.floor((ms % 60000) / 1000)
+  if (d > 0) return `${d}d ${h}h ${m}m`
+  if (h > 0) return `${h}h ${m}m ${s}s`
+  if (m > 0) return `${m}m ${s}s`
+  return `${s}s`
+}
+
+app.get('/api/debug/cache', async (_req, res) => {
+  const syncState = getSyncState()
+
+  const cacheHeaders = {
+    'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+    'Pragma': 'no-cache',
+    'Expires': '0',
+    'Surrogate-Control': 'no-store',
+    'Vary': 'Origin',
+  }
+
+  const latestDb = await getLatestDbUpdate()
+
+  const oldestAge = syncState.oldestEffectiveAgeMs
+  const newestAge = syncState.newestEffectiveAgeMs
+
+  return res.json({
+    serverTime: new Date().toISOString(),
+
+    lastWingaFetch: syncState.lastWingaFetchAt,
+    lastWingaFetchError: syncState.lastWingaFetchError,
+    lastWingaFetchAgeMs: syncState.lastWingaFetchAgeMs,
+    lastWingaFetchRateCount: syncState.lastWingaFetchRateCount,
+
+    providerTimestamp: syncState.providerTimestamp,
+    providerAgeMs: syncState.providerAgeMs,
+    providerAgeHuman: syncState.providerAgeMs != null ? formatDuration(syncState.providerAgeMs) : null,
+
+    lastSuccessfulSync: {
+      timestamp: syncState.lastSuccessfulSyncAt,
+      ageMs: syncState.lastSuccessfulSyncAgeMs,
+      ageHuman: syncState.lastSuccessfulSyncAgeMs != null ? formatDuration(syncState.lastSuccessfulSyncAgeMs) : null,
+    },
+    lastRejectedSync: {
+      timestamp: syncState.lastRejectedSyncAt,
+      ageMs: syncState.lastRejectedSyncAgeMs,
+      ageHuman: syncState.lastRejectedSyncAgeMs != null ? formatDuration(syncState.lastRejectedSyncAgeMs) : null,
+    },
+
+    syncDecision: syncState.lastSyncDecision,
+    staleReason: syncState.staleReason,
+
+    wingaDataAge: {
+      oldestEffectiveDateAndTime: syncState.oldestEffectiveDateAndTime,
+      oldestAgeMs: oldestAge,
+      oldestAgeHuman: oldestAge != null ? formatDuration(oldestAge) : null,
+      newestEffectiveDateAndTime: syncState.newestEffectiveDateAndTime,
+      newestAgeMs: newestAge,
+      newestAgeHuman: newestAge != null ? formatDuration(newestAge) : null,
+      staleThresholdMs: syncState.staleThresholdMs,
+      isStale: oldestAge != null ? oldestAge > syncState.staleThresholdMs : null,
+    },
+
+    lastDatabaseUpdate: latestDb
+      ? {
+          latestUpdatedAt: latestDb.latest,
+          latestEffectiveDateTime: latestDb.latestEffective,
+          totalRows: Number(latestDb.total),
+          adminPublishedRows: Number(latestDb.adminCount || 0),
+          wingaSyncedRows: Number(latestDb.wingaCount || 0),
+          databaseConnected: true,
+        }
+      : {
+          databaseConnected: false,
+          latestUpdatedAt: null,
+          latestEffectiveDateTime: null,
+          totalRows: 0,
+        },
+
+    databaseTimestamp: latestDb?.latest || null,
+    databaseAgeMs: latestDb?.latest ? Date.now() - new Date(latestDb.latest).getTime() : null,
+    databaseAgeHuman: latestDb?.latest ? formatDuration(Date.now() - new Date(latestDb.latest).getTime()) : null,
+
+    inMemoryCache: {
+      lastUpdated: syncState.inMemoryCacheAt,
+      ageMs: syncState.inMemoryCacheAgeMs,
+      ttlMs: syncState.inMemoryCacheTtlMs,
+      isFresh: syncState.inMemoryCacheFresh,
+      rateCount: syncState.inMemoryRateCount,
+    },
+
+    syncConfig: {
+      syncIntervalMs: Number(process.env.SYNC_INTERVAL_MS) || 15_000,
+      staleThresholdMs: syncState.staleThresholdMs,
+      wingaCredentialsConfigured: syncState.wingaCredentialsConfigured,
+    },
+
+    cacheHeaders,
+
+    layers: [
+      { name: 'Browser HTTP cache', status: 'BYPASSED', detail: 'fetch(cache:"no-store") + Cache-Control: no-store on all responses' },
+      { name: 'Nginx reverse proxy', status: 'BYPASSED', detail: 'No proxy_cache configured; proxy_hide_header + add_header no-store on /api/' },
+      { name: 'CDN', status: 'N/A', detail: 'No CDN configured in deployment' },
+      { name: 'Service worker', status: 'NOT REGISTERED', detail: 'No service worker, no workbox in the application' },
+      { name: 'React Query', status: 'BYPASSED', detail: 'staleTime: 0, refetchOnWindowFocus: true, refetchInterval: 15000ms' },
+      { name: 'localStorage', status: 'NO RATE DATA', detail: 'Only auth tokens, branch selection, and favorites are persisted' },
+      { name: 'IndexedDB', status: 'NOT USED', detail: 'No IndexedDB access in the codebase' },
+      { name: 'Backend in-memory (syncService cachedRates)', status: syncState.inMemoryCacheFresh ? 'FRESH' : 'STALE', detail: `TTL=${syncState.inMemoryCacheTtlMs}ms, age=${syncState.inMemoryCacheAgeMs}ms` },
+      { name: 'Backend in-memory (rateEngine currentRates)', status: 'UPDATED', detail: 'Now refreshed every sync cycle via setCurrentRates; no TTL, no invalidation' },
+      { name: 'Winga upstream API', status: syncState.lastWingaFetchError ? 'ERROR' : syncState.lastSyncDecision === 'rejected-stale' ? 'STALE' : 'LIVE', detail: `Last fetch age=${syncState.lastWingaFetchAgeMs}ms, rates=${syncState.lastWingaFetchRateCount}, decision=${syncState.lastSyncDecision}` },
+    ],
+  })
+})
+
 async function broadcastRates() {
   try {
     const dbRates = await getLatestRates()
@@ -190,18 +315,18 @@ async function broadcastRates() {
         acc[r.currency_code] = { buy: r.buying_rate, sell: r.selling_rate }
         return acc
       }, {})
-      io.emit('rates:update', { rates: ratesMap, source: 'database' })
+      io.emit('rates:update', { rates: ratesMap, source: 'database', generatedAt: new Date().toISOString() })
       return
     }
     const rates = getRates()
     if (Object.keys(rates).length > 0) {
-      io.emit('rates:update', { rates, source: 'winga-live' })
+      io.emit('rates:update', { rates, source: 'winga-live', generatedAt: new Date().toISOString() })
     }
   } catch (err) {
     console.error('[socket] Broadcast failed:', err.message)
     const rates = getRates()
     if (Object.keys(rates).length > 0) {
-      io.emit('rates:update', { rates, source: 'winga-live' })
+      io.emit('rates:update', { rates, source: 'winga-live', generatedAt: new Date().toISOString() })
     }
   }
 }
@@ -232,7 +357,16 @@ io.on('connection', async (socket) => {
 
 const runInitialSync = async () => {
   try {
-    await refreshFromProvider('HEAD OFFICE')
+     const result = await syncRates()
+    if (result.success) {
+      if (result.stale) {
+        console.warn(`[startup] Initial sync: Winga data is STALE (${result.staleReason}). Keeping verified database/in-memory rates.`)
+      } else {
+        console.log(`[startup] Initial sync complete: ${result.ratesCount} rates from Winga`)
+      }
+    } else {
+      console.error(`[startup] Initial sync failed: ${result.error}`)
+    }
   } catch (err) {
     console.error('[startup] Initial sync failed:', err.message)
   }
