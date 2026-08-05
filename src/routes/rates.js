@@ -199,7 +199,7 @@ router.get('/history', async (req, res) => {
     const branchName = resolveBranch(req)
     const [rows] = await db.query(
       `SELECT branch_name, currency_code, currency_name, currency_actual_name, currency_sequence,
-              buying_rate, selling_rate, source, updated_at, effective_date_time
+              buying_rate, selling_rate, source, updated_at, effective_date_and_time
        FROM exchange_rates
        WHERE branch_name = ?
        ORDER BY updated_at DESC

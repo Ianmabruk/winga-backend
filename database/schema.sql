@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS exchange_rates (
   currency_name VARCHAR(120) NOT NULL,
   buying_rate NUMERIC(18, 6) NOT NULL,
   selling_rate NUMERIC(18, 6) NOT NULL,
-  effective_date_time TIMESTAMP DEFAULT NOW(),
+  effective_date_and_time TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW(),
   source VARCHAR(60) DEFAULT 'internal'
 );

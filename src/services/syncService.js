@@ -18,6 +18,8 @@ const AUTHORIZATION_HEADER = WINGA_API_KEY && WINGA_API_SECRET
 
 const STALE_THRESHOLD_MS = Number(process.env.STALE_THRESHOLD_MS) || (60 * 60 * 1000)
 
+const WINGA_FRESHNESS_FIELD = 'effective_date_and_time'
+
 const formatDuration = (ms) => {
   if (ms == null || ms < 0) return 'unknown'
   const d = Math.floor(ms / 86400000)
@@ -35,7 +37,15 @@ const validateProviderTimestamp = (effectiveDates) => {
   const parsed = Object.values(effectiveDates)
     .map(parseEffectiveDate)
     .filter((d) => d !== null)
-  if (!parsed.length) return { isStale: true, reason: 'No valid effective_date_and_time found in provider response', oldestDate: null, newestDate: null, ageMs: null }
+  if (!parsed.length) {
+    return {
+      isStale: true,
+      reason: `No valid ${WINGA_FRESHNESS_FIELD} found in provider response — cannot determine freshness`,
+      oldestDate: null,
+      newestDate: null,
+      ageMs: null,
+    }
+  }
 
   parsed.sort((a, b) => a.getTime() - b.getTime())
   const oldestDate = parsed[0]
@@ -45,7 +55,7 @@ const validateProviderTimestamp = (effectiveDates) => {
   if (ageMs > STALE_THRESHOLD_MS) {
     return {
       isStale: true,
-      reason: `Provider effective_date_and_time (${newestDate.toISOString().replace('T', ' ').replace('Z', '')}) is ${formatDuration(ageMs)} old, exceeding threshold of ${formatDuration(STALE_THRESHOLD_MS)}`,
+      reason: `Provider ${WINGA_FRESHNESS_FIELD} (${newestDate.toISOString().replace('T', ' ').replace('Z', '')}) is ${formatDuration(ageMs)} old, exceeding threshold of ${formatDuration(STALE_THRESHOLD_MS)}`,
       oldestDate,
       newestDate,
       ageMs,
@@ -61,13 +71,19 @@ const fetchWingaRates = async (branchName = WINGA_BRANCH) => {
   }
 
   const response = await axios.get(WINGA_RATES_ENDPOINT, {
-    params: { branch_name: branchName },
+    params: {
+      branch_name: branchName,
+      _: Date.now(),
+      t: Date.now(),
+    },
     headers: {
       Authorization: AUTHORIZATION_HEADER,
       Accept: 'application/json',
       'Cache-Control': 'no-cache, no-store, must-revalidate',
       Pragma: 'no-cache',
       Expires: '0',
+      'X-Cache-Bypass': 'true',
+      'X-Requested-With': 'XMLHttpRequest',
     },
     timeout: 15000,
   })
@@ -85,15 +101,15 @@ const fetchWingaRates = async (branchName = WINGA_BRANCH) => {
 
   const effectiveDates = {}
   for (const r of rates) {
-    if (r.currency_code && r.effective_date_and_time) {
-      effectiveDates[String(r.currency_code).toUpperCase()] = r.effective_date_and_time
+    if (r.currency_code && r[WINGA_FRESHNESS_FIELD]) {
+      effectiveDates[String(r.currency_code).toUpperCase()] = r[WINGA_FRESHNESS_FIELD]
     }
   }
 
   const now = Date.now()
   const staleEntries = rates.filter((r) => {
-    if (!r.effective_date_and_time) return false
-    const safe = String(r.effective_date_and_time).trim()
+    if (!r[WINGA_FRESHNESS_FIELD]) return false
+    const safe = String(r[WINGA_FRESHNESS_FIELD]).trim()
     const iso = safe.includes('T') ? safe : safe.replace(' ', 'T')
     const d = new Date(iso)
     if (isNaN(d.getTime())) return false
@@ -107,14 +123,14 @@ const fetchWingaRates = async (branchName = WINGA_BRANCH) => {
   if (staleEntries.length > 0) {
     const oldest = staleEntries
       .sort((a, b) => {
-        const da = new Date(String(a.effective_date_and_time).trim().replace(' ', 'T'))
-        const db = new Date(String(b.effective_date_and_time).trim().replace(' ', 'T'))
+        const da = new Date(String(a[WINGA_FRESHNESS_FIELD]).trim().replace(' ', 'T'))
+        const db = new Date(String(b[WINGA_FRESHNESS_FIELD]).trim().replace(' ', 'T'))
         return da.getTime() - db.getTime()
       })[0]
     console.warn(
       `[syncService] WARNING: Winga API returned STALE data. ` +
-        `${staleEntries.length}/${rates.length} rates have effective_date_and_time older than ${formatDuration(STALE_THRESHOLD_MS)}. ` +
-        `Oldest: ${oldest?.effective_date_and_time}. ` +
+        `${staleEntries.length}/${rates.length} rates have ${WINGA_FRESHNESS_FIELD} older than ${formatDuration(STALE_THRESHOLD_MS)}. ` +
+        `Oldest: ${oldest?.[WINGA_FRESHNESS_FIELD]}. ` +
         `This indicates a Frappe cache or unsynced Winga database. ` +
         `Currency codes affected: ${[...new Set(staleEntries.map((r) => r.currency_code))].join(', ')}`,
     )
@@ -265,12 +281,15 @@ const syncBranches = async () => {
     }
 
     const response = await axios.get(WINGA_BRANCHES_ENDPOINT, {
+      params: { _: Date.now() },
       headers: {
         Authorization: AUTHORIZATION_HEADER,
         Accept: 'application/json',
         'Cache-Control': 'no-cache, no-store, must-revalidate',
         Pragma: 'no-cache',
         Expires: '0',
+        'X-Cache-Bypass': 'true',
+        'X-Requested-With': 'XMLHttpRequest',
       },
       timeout: 15000,
     })
@@ -421,14 +440,17 @@ const diagnosticsWingaRates = async (branchName = WINGA_BRANCH) => {
       throw new Error('WINGA_API_KEY and WINGA_API_SECRET are not configured')
     }
 
+    const cacheBust = `_=${Date.now()}&t=${Date.now()}`
     const response = await axios.get(WINGA_RATES_ENDPOINT, {
-      params: { branch_name: branchName },
+      params: { branch_name: branchName, ...Object.fromEntries(new URLSearchParams(cacheBust)) },
       headers: {
         Authorization: AUTHORIZATION_HEADER,
         Accept: 'application/json',
         'Cache-Control': 'no-cache, no-store, must-revalidate',
         Pragma: 'no-cache',
         Expires: '0',
+        'X-Cache-Bypass': 'true',
+        'X-Requested-With': 'XMLHttpRequest',
       },
       timeout: 15000,
       validateStatus: () => true,
@@ -437,7 +459,7 @@ const diagnosticsWingaRates = async (branchName = WINGA_BRANCH) => {
     status = response.status
     statusText = response.statusText
     responseHeaders = response.headers || {}
-    requestUrl = `${WINGA_RATES_ENDPOINT}?branch_name=${encodeURIComponent(branchName)}`
+    requestUrl = `${WINGA_RATES_ENDPOINT}?branch_name=${encodeURIComponent(branchName)}&${cacheBust}`
     data = response.data
 
     if (status !== 200) {
@@ -489,13 +511,17 @@ const diagnosticsWingaBranches = async () => {
       throw new Error('WINGA_API_KEY and WINGA_API_SECRET are not configured')
     }
 
+    const cacheBust = `_=${Date.now()}`
     const response = await axios.get(WINGA_BRANCHES_ENDPOINT, {
+      params: { ...Object.fromEntries(new URLSearchParams(cacheBust)) },
       headers: {
         Authorization: AUTHORIZATION_HEADER,
         Accept: 'application/json',
         'Cache-Control': 'no-cache, no-store, must-revalidate',
         Pragma: 'no-cache',
         Expires: '0',
+        'X-Cache-Bypass': 'true',
+        'X-Requested-With': 'XMLHttpRequest',
       },
       timeout: 15000,
       validateStatus: () => true,
@@ -504,7 +530,7 @@ const diagnosticsWingaBranches = async () => {
     status = response.status
     statusText = response.statusText
     responseHeaders = response.headers || {}
-    requestUrl = WINGA_BRANCHES_ENDPOINT
+    requestUrl = `${WINGA_BRANCHES_ENDPOINT}?${cacheBust}`
     data = response.data
 
     if (status !== 200) {

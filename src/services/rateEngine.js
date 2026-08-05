@@ -90,6 +90,8 @@ const fetchExchangeRates = async (branchName = WINGA_BRANCH) => {
       'Cache-Control': 'no-cache, no-store, must-revalidate',
       Pragma: 'no-cache',
       Expires: '0',
+      'X-Cache-Bypass': 'true',
+      'X-Requested-With': 'XMLHttpRequest',
     },
     timeout: 15000,
   })

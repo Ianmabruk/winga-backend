@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS exchange_rates (
   currency_sequence INT DEFAULT 0,
   buying_rate DECIMAL(18, 6) NOT NULL,
   selling_rate DECIMAL(18, 6) NOT NULL,
-  effective_date_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+  effective_date_and_time DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   source VARCHAR(60) DEFAULT 'internal',
   INDEX idx_exchange_rates_branch (branch_name),
