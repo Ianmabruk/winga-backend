@@ -14,8 +14,9 @@ const authRoutes = require('./routes/auth')
 const analyticsRoutes = require('./routes/analytics')
 const adminRoutes = require('./routes/admin')
 const { attachAuditContext } = require('./middleware/audit')
-const { syncRates, getLatestRates, fetchWingaRates, syncBranches, getSyncState, getLatestDbUpdate } = require('./services/syncService')
-const { getRates } = require('./services/rateEngine')
+const { syncRates, getLatestRates, fetchWingaRates, syncBranches, getSyncState, getLatestDbUpdate, loadSnapshot, getSnapshotInfo } = require('./services/syncService')
+const { getRates, setCurrentRates } = require('./services/rateEngine')
+const db = require('./config/db')
 
 const app = express()
 const server = http.createServer(app)
@@ -109,24 +110,7 @@ app.get('/api/rates/public', async (_req, res) => {
       return res.json({
         rates: dbRates.rates,
         lastUpdated: dbRates.lastUpdated,
-        source: 'database',
-      })
-    }
-    const rates = getRates()
-    if (Object.keys(rates).length > 0) {
-      const formatted = Object.entries(rates).map(([code, quote], idx) => ({
-        currency_code: code,
-        currency_name: code,
-        currency_actual_name: code,
-        currency_sequence: idx + 1,
-        buying_rate: quote.buy,
-        selling_rate: quote.sell,
-        effective_date_and_time: new Date().toISOString().replace('T', ' ').replace('Z', ''),
-      }))
-      return res.json({
-        rates: formatted,
-        lastUpdated: new Date().toISOString(),
-        source: 'winga-live',
+        source: dbRates.source,
       })
     }
     return res.json({
@@ -136,20 +120,10 @@ app.get('/api/rates/public', async (_req, res) => {
     })
   } catch (err) {
     console.error('[api] Failed to fetch public rates:', err.message)
-    const rates = getRates()
-    const formatted = Object.entries(rates).map(([code, quote], idx) => ({
-      currency_code: code,
-      currency_name: code,
-      currency_actual_name: code,
-      currency_sequence: idx + 1,
-      buying_rate: quote.buy,
-      selling_rate: quote.sell,
-      effective_date_and_time: new Date().toISOString(),
-    }))
     return res.json({
-      rates: formatted,
+      rates: [],
       lastUpdated: new Date().toISOString(),
-      source: 'winga-live',
+      source: 'unavailable',
     })
   }
 })
@@ -157,16 +131,16 @@ app.get('/api/rates/public', async (_req, res) => {
 app.get('/api/winga-rates.php', async (req, res) => {
   const branch = req.query.branch || 'HEAD OFFICE'
   try {
-    const rates = await fetchWingaRates(branch)
-    const message = rates.map((r) => ({ ...r, source: 'winga-live' }))
-    return res.json({ message })
-  } catch (err) {
-    console.error('[api] winga-rates proxy failed:', err.message)
     const dbResult = await getLatestRates(branch)
     if (dbResult.rates?.length) {
-      return res.json({ message: dbResult.rates.map((r) => ({ ...r, source: 'winga-cached' })) })
+      return res.json({
+        message: dbResult.rates.map((r) => ({ ...r, source: dbResult.source })),
+      })
     }
-    return res.status(503).json({ error: 'Winga rates unavailable', source: 'unavailable' })
+    return res.status(503).json({ error: 'Rates unavailable', source: 'unavailable' })
+  } catch (err) {
+    console.error('[api] winga-rates proxy failed:', err.message)
+    return res.status(503).json({ error: 'Rates unavailable', source: 'unavailable' })
   }
 })
 
@@ -276,6 +250,8 @@ app.get('/api/debug/cache', async (_req, res) => {
     databaseAgeMs: latestDb?.latest ? Date.now() - new Date(latestDb.latest).getTime() : null,
     databaseAgeHuman: latestDb?.latest ? formatDuration(Date.now() - new Date(latestDb.latest).getTime()) : null,
 
+    snapshot: getSnapshotInfo(),
+
     inMemoryCache: {
       lastUpdated: syncState.inMemoryCacheAt,
       ageMs: syncState.inMemoryCacheAgeMs,
@@ -315,19 +291,13 @@ async function broadcastRates() {
         acc[r.currency_code] = { buy: r.buying_rate, sell: r.selling_rate }
         return acc
       }, {})
-      io.emit('rates:update', { rates: ratesMap, source: 'database', generatedAt: new Date().toISOString() })
+      io.emit('rates:update', { rates: ratesMap, source: dbRates.source, generatedAt: new Date().toISOString() })
       return
     }
-    const rates = getRates()
-    if (Object.keys(rates).length > 0) {
-      io.emit('rates:update', { rates, source: 'winga-live', generatedAt: new Date().toISOString() })
-    }
+    io.emit('rates:update', { rates: {}, source: 'unavailable', generatedAt: new Date().toISOString() })
   } catch (err) {
     console.error('[socket] Broadcast failed:', err.message)
-    const rates = getRates()
-    if (Object.keys(rates).length > 0) {
-      io.emit('rates:update', { rates, source: 'winga-live', generatedAt: new Date().toISOString() })
-    }
+    io.emit('rates:update', { rates: {}, source: 'unavailable', generatedAt: new Date().toISOString() })
   }
 }
 
@@ -357,6 +327,20 @@ io.on('connection', async (socket) => {
 
 const runInitialSync = async () => {
   try {
+    if (!db.isReady()) {
+      const snapshot = loadSnapshot()
+      if (snapshot?.rates && Object.keys(snapshot.rates).length > 0) {
+        const ratesMap = Object.entries(snapshot.rates).reduce((acc, [code, quote]) => {
+          acc[code] = { buy: quote.buy, sell: quote.sell }
+          return acc
+        }, {})
+        setCurrentRates(ratesMap)
+        console.log(`[startup] Loaded ${Object.keys(ratesMap).length} rates from snapshot into cache (DB unavailable)`)
+      } else {
+        console.warn('[startup] Database not configured and no snapshot available — rates will be unavailable until DB is connected or Winga returns fresh data')
+      }
+    }
+
      const result = await syncRates()
     if (result.success) {
       if (result.stale) {

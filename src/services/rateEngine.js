@@ -21,10 +21,18 @@ const persistRates = async (rates, source = 'provider', branchName = 'HEAD OFFIC
     for (const [code, quote] of Object.entries(rates)) {
       // Check existing record — do NOT overwrite newer DB data with stale API data
       const [existing] = await db.query(
-        'SELECT effective_date_and_time FROM exchange_rates WHERE branch_name = ? AND currency_code = ? ORDER BY effective_date_and_time DESC LIMIT 1',
+        'SELECT effective_date_and_time, source FROM exchange_rates WHERE branch_name = ? AND currency_code = ? ORDER BY effective_date_and_time DESC LIMIT 1',
         [branchName, code],
       )
       const existingEff = existing[0]?.effective_date_and_time
+      const existingSource = existing[0]?.source
+
+      // Never overwrite admin-published rates with provider data
+      if (existingSource === 'admin-published' && source === 'winga') {
+        console.log(`[rateEngine] Skipping ${code} for ${branchName}: admin-published rate protected from provider overwrite`)
+        continue
+      }
+
       if (existingEff && effectiveDates[code]) {
         const existingDate = parseEffectiveDate(existingEff)
         const incomingDate = parseEffectiveDate(effectiveDates[code])

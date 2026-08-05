@@ -1,4 +1,6 @@
 const axios = require('axios')
+const fs = require('fs')
+const path = require('path')
 const { persistRates, setCurrentRates } = require('./rateEngine')
 const db = require('../config/db')
 
@@ -17,6 +19,51 @@ const AUTHORIZATION_HEADER = WINGA_API_KEY && WINGA_API_SECRET
   : ''
 
 const STALE_THRESHOLD_MS = Number(process.env.STALE_THRESHOLD_MS) || (60 * 60 * 1000)
+
+const SNAPSHOT_DIR = path.join(__dirname, '..', 'data')
+const SNAPSHOT_FILE = path.join(SNAPSHOT_DIR, 'last-snapshot.json')
+
+const ensureSnapshotDir = () => {
+  if (!fs.existsSync(SNAPSHOT_DIR)) {
+    fs.mkdirSync(SNAPSHOT_DIR, { recursive: true })
+  }
+}
+
+const saveSnapshot = (rates, source = 'winga', branchName = WINGA_BRANCH) => {
+  try {
+    ensureSnapshotDir()
+    const snapshot = {
+      rates,
+      source,
+      branchName,
+      savedAt: new Date().toISOString(),
+      timestamp: Date.now(),
+    }
+    fs.writeFileSync(SNAPSHOT_FILE, JSON.stringify(snapshot, null, 2))
+    console.log(`[syncService] Snapshot saved: ${Object.keys(rates).length} rates from ${source}`)
+  } catch (err) {
+    console.error('[syncService] Failed to save snapshot:', err.message)
+  }
+}
+
+const loadSnapshot = () => {
+  try {
+    if (!fs.existsSync(SNAPSHOT_FILE)) return null
+    const raw = fs.readFileSync(SNAPSHOT_FILE, 'utf8')
+    const snapshot = JSON.parse(raw)
+    if (!snapshot.rates || !snapshot.savedAt) return null
+    const ageMs = Date.now() - (snapshot.timestamp || 0)
+    if (ageMs > 24 * 60 * 60 * 1000) {
+      console.warn(`[syncService] Snapshot is ${formatDuration(ageMs)} old, treating as stale`)
+      return null
+    }
+    console.log(`[syncService] Snapshot loaded: ${Object.keys(snapshot.rates).length} rates from ${snapshot.source}, saved ${formatDuration(ageMs)} ago`)
+    return snapshot
+  } catch (err) {
+    console.error('[syncService] Failed to load snapshot:', err.message)
+    return null
+  }
+}
 
 const WINGA_FRESHNESS_FIELD = 'effective_date_and_time'
 
@@ -255,6 +302,8 @@ const syncRates = async () => {
       console.log(`[syncService] Persisted ${formattedRates.length} rates to database`)
     }
 
+    saveSnapshot(rates, 'winga', WINGA_BRANCH)
+
     lastSuccessfulSyncAt = Date.now()
     lastSyncDecision = 'accepted'
     lastStaleReason = null
@@ -363,6 +412,23 @@ const getSyncState = () => {
   }
 }
 
+const getSnapshotInfo = () => {
+  try {
+    const snapshot = loadSnapshot()
+    if (!snapshot) return { exists: false }
+    return {
+      exists: true,
+      source: snapshot.source,
+      branchName: snapshot.branchName,
+      savedAt: snapshot.savedAt,
+      rateCount: Object.keys(snapshot.rates).length,
+      ageMs: Date.now() - (snapshot.timestamp || 0),
+    }
+  } catch {
+    return { exists: false }
+  }
+}
+
 const getLatestDbUpdate = async () => {
   if (!db.isReady()) return null
   try {
@@ -400,22 +466,24 @@ const getLatestRates = async (branchName) => {
       }
     }
 
-    if (Object.keys(cachedRates).length > 0 && Date.now() - cachedRatesAt < CACHE_TTL_MS) {
-      const inMemoryRates = Object.entries(cachedRates).map(([code, quote], idx) => ({
+    const snapshot = loadSnapshot()
+    if (snapshot?.rates && Object.keys(snapshot.rates).length > 0) {
+      const snapshotRates = Object.entries(snapshot.rates).map(([code, quote], idx) => ({
         currency_code: code,
         currency_name: code,
         currency_actual_name: code,
         currency_sequence: idx + 1,
         buying_rate: quote.buy,
         selling_rate: quote.sell,
-        effective_date_and_time: cachedEffectiveDates[code] || new Date().toISOString().replace('T', ' ').replace('Z', ''),
-        updated_at: new Date().toISOString(),
-        source: 'winga-live',
+        effective_date_and_time: new Date(snapshot.savedAt).toISOString().replace('T', ' ').replace('Z', ''),
+        updated_at: snapshot.savedAt,
+        source: snapshot.source,
       }))
       return {
-        rates: inMemoryRates,
-        lastUpdated: new Date().toISOString(),
-        currencyCount: inMemoryRates.length,
+        rates: snapshotRates,
+        lastUpdated: snapshot.savedAt,
+        currencyCount: snapshotRates.length,
+        source: 'snapshot',
       }
     }
 
@@ -577,4 +645,7 @@ module.exports = {
   diagnosticsWingaBranches,
   getSyncState,
   getLatestDbUpdate,
+  loadSnapshot,
+  saveSnapshot,
+  getSnapshotInfo,
 }
