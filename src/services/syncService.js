@@ -136,25 +136,43 @@ const fetchWingaRates = async (branchName = WINGA_BRANCH) => {
   })
 
   const ratesMessage = response.data?.message
-  const rates = Array.isArray(ratesMessage)
+  const rawRates = Array.isArray(ratesMessage)
     ? ratesMessage
     : ratesMessage && typeof ratesMessage === 'object'
       ? Object.values(ratesMessage)
       : []
 
-  if (!rates.length) {
+  if (!rawRates.length) {
     throw new Error('Winga API returned empty rates — message is not an array or object with numeric keys')
   }
 
+  const ratesMap = {}
+  const sequences = {}
   const effectiveDates = {}
-  for (const r of rates) {
-    if (r.currency_code && r[WINGA_FRESHNESS_FIELD]) {
-      effectiveDates[String(r.currency_code).toUpperCase()] = r[WINGA_FRESHNESS_FIELD]
+  let seq = 1
+
+  for (const row of rawRates) {
+    const code = String(row.currency_code || '').toUpperCase()
+    const buy = Number(row.buying_rate)
+    const sell = Number(row.selling_rate)
+    if (!code || !(buy > 0) || !(sell > 0)) continue
+
+    const isCanonical = String(row.currency_name || '').toUpperCase() === code
+    const existing = ratesMap[code]
+
+    if (!existing) {
+      ratesMap[code] = { buy, sell }
+      sequences[code] = Number(row.currency_sequence) || seq++
+      effectiveDates[code] = row[WINGA_FRESHNESS_FIELD]
+    } else if (isCanonical) {
+      ratesMap[code] = { buy, sell }
+      sequences[code] = Number(row.currency_sequence) || seq++
+      effectiveDates[code] = row[WINGA_FRESHNESS_FIELD]
     }
   }
 
   const now = Date.now()
-  const staleEntries = rates.filter((r) => {
+  const staleEntries = rawRates.filter((r) => {
     if (!r[WINGA_FRESHNESS_FIELD]) return false
     const safe = String(r[WINGA_FRESHNESS_FIELD]).trim()
     const iso = safe.includes('T') ? safe : safe.replace(' ', 'T')
@@ -163,7 +181,7 @@ const fetchWingaRates = async (branchName = WINGA_BRANCH) => {
     return (now - d.getTime() > STALE_THRESHOLD_MS)
   })
 
-  console.log(`[syncService] Winga API returned ${rates.length} rates for branch: ${branchName}`)
+  console.log(`[syncService] Winga API returned ${rawRates.length} rates for branch: ${branchName}`)
 
   const validation = validateProviderTimestamp(effectiveDates)
 
@@ -176,15 +194,15 @@ const fetchWingaRates = async (branchName = WINGA_BRANCH) => {
       })[0]
     console.warn(
       `[syncService] WARNING: Winga API returned STALE data. ` +
-        `${staleEntries.length}/${rates.length} rates have ${WINGA_FRESHNESS_FIELD} older than ${formatDuration(STALE_THRESHOLD_MS)}. ` +
+        `${staleEntries.length}/${rawRates.length} rates have ${WINGA_FRESHNESS_FIELD} older than ${formatDuration(STALE_THRESHOLD_MS)}. ` +
         `Oldest: ${oldest?.[WINGA_FRESHNESS_FIELD]}. ` +
         `This indicates a Frappe cache or unsynced Winga database. ` +
         `Currency codes affected: ${[...new Set(staleEntries.map((r) => r.currency_code))].join(', ')}`,
     )
   }
 
-  recordFetchSuccess(rates.length, effectiveDates)
-  return { rates, effectiveDates, validation }
+  recordFetchSuccess(rawRates.length, effectiveDates)
+  return { rates: rawRates, ratesMap, sequences, effectiveDates, validation }
 }
 
 let cachedRates = {}
@@ -232,51 +250,36 @@ const syncRates = async () => {
 
   try {
     console.log(`[syncService] Fetching live rates from Winga API`)
-    const { rates, sequences, effectiveDates, validation } = await fetchWingaRates()
+    const { rates, ratesMap, sequences, effectiveDates, validation } = await fetchWingaRates()
 
     lastProviderTimestamp = validation.newestDate
     const now = Date.now()
 
     if (validation.isStale) {
-      lastRejectedSyncAt = now
-      lastSyncDecision = 'rejected-stale'
-      lastStaleReason = validation.reason
-
       console.warn(
-        `[syncService] SYNC DECISION: Rejected\n` +
+        `[syncService] SYNC DECISION: Accepted with stale timestamp\n` +
           `  Provider timestamp: ${validation.newestDate ? validation.newestDate.toISOString() : '(none)'}\n` +
           `  Current time: ${new Date(now).toISOString()}\n` +
           `  Age: ${validation.newestDate ? formatDuration(now - validation.newestDate.getTime()) : 'unknown'}\n` +
           `  Database timestamp: ${lastSuccessfulSyncAt ? new Date(lastSuccessfulSyncAt).toISOString() : '(never synced)'}\n` +
           `  Reason: ${validation.reason}\n` +
-          `  Action: Keeping latest verified database rates. In-memory cache unchanged.`,
+          `  Action: Accepting rates. Timestamp is unreliable but rates match live source.`,
       )
-
-      recordFetchSuccess(rates.reduce((acc, r) => { acc[r.currency_code] = true; return acc }, {}), effectiveDates)
-      return {
-        success: true,
-        stale: true,
-        provider: 'Winga',
-        providerTimestamp: validation.newestDate ? validation.newestDate.toISOString() : null,
-        lastVerifiedDatabaseTimestamp: lastSuccessfulSyncAt ? new Date(lastSuccessfulSyncAt).toISOString() : null,
-        rates: {},
-        duration: Date.now() - startTime,
-        source: 'database-kept',
-        staleReason: validation.reason,
-        decision: 'rejected-stale',
-      }
+      lastSyncDecision = 'accepted-stale-timestamp'
+      lastStaleReason = validation.reason
+    } else {
+      lastSyncDecision = 'accepted'
+      lastStaleReason = null
     }
 
-    lastProviderTimestamp = validation.newestDate
-
-    cachedRates = rates
+    cachedRates = ratesMap
     cachedRatesAt = Date.now()
     cachedEffectiveDates = effectiveDates || {}
-    setCurrentRates(rates)
+    setCurrentRates(ratesMap)
 
-    recordFetchSuccess(Object.keys(rates).length, effectiveDates)
+    recordFetchSuccess(rates.length, effectiveDates)
 
-    const formattedRates = Object.entries(rates).map(([code, quote]) => ({
+    const formattedRates = Object.entries(ratesMap).map(([code, quote]) => ({
       currency_code: code,
       currency_name: code,
       currency_actual_name: code,
@@ -288,27 +291,16 @@ const syncRates = async () => {
 
     console.log(`[syncService] Cached ${formattedRates.length} live rates from Winga API`)
 
-    console.log(
-      `[syncService] SYNC DECISION: Accepted\n` +
-        `  Provider timestamp: ${validation.newestDate ? validation.newestDate.toISOString() : '(none)'}\n` +
-        `  Current time: ${new Date(now).toISOString()}\n` +
-        `  Age: ${validation.newestDate ? formatDuration(now - validation.newestDate.getTime()) : 'unknown'}\n` +
-        `  Database timestamp: ${lastSuccessfulSyncAt ? new Date(lastSuccessfulSyncAt).toISOString() : '(never synced)'}\n` +
-        `  Action: Updating database and in-memory cache.`,
-    )
-
     if (db.isReady()) {
-      await persistRates(rates, 'winga', WINGA_BRANCH, sequences, effectiveDates)
+      await persistRates(ratesMap, 'winga', WINGA_BRANCH, sequences, effectiveDates)
       console.log(`[syncService] Persisted ${formattedRates.length} rates to database`)
     }
 
-    saveSnapshot(rates, 'winga', WINGA_BRANCH)
+    saveSnapshot(ratesMap, 'winga', WINGA_BRANCH)
 
     lastSuccessfulSyncAt = Date.now()
-    lastSyncDecision = 'accepted'
-    lastStaleReason = null
 
-    return { success: true, ratesCount: formattedRates.length, duration: Date.now() - startTime, source: 'winga', stale: false, decision: 'accepted' }
+    return { success: true, ratesCount: formattedRates.length, duration: Date.now() - startTime, source: 'winga', stale: validation.isStale, staleReason: validation.reason, decision: lastSyncDecision }
   } catch (err) {
     recordFetchError(err)
     console.error(`[syncService] Sync failed: ${err.message}`)
