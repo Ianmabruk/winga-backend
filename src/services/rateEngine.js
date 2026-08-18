@@ -75,7 +75,7 @@ const parseEffectiveDate = (dateStr) => {
   try {
     const safe = String(dateStr).trim()
     const iso = safe.includes('T') ? safe : safe.replace(' ', 'T')
-    const d = new Date(iso)
+    const d = new Date(iso + 'Z')
     if (isNaN(d.getTime())) return null
     return d
   } catch {
@@ -125,10 +125,17 @@ const fetchExchangeRates = async (branchName = WINGA_BRANCH) => {
     const sell = Number(row.selling_rate)
     if (!code || !(buy > 0) || !(sell > 0)) continue
 
-    const isCanonical = String(row.currency_name || '').toUpperCase() === code
+    const name = String(row.currency_name || '').toUpperCase()
+    const actual = String(row.currency_actual_name || '').toUpperCase()
+    const isStandardDenom = (name.startsWith(code + ' ($') || actual.startsWith(code + ' ($')) && !/\(\d{4}/.test(name) && !/\(\d{4}/.test(actual)
+    const isCanonical = name === code
     const existing = mapped[code]
 
     if (!existing) {
+      mapped[code] = { buy, sell }
+      sequences[code] = Number(row.currency_sequence) || seq++
+      effectiveDates[code] = row.effective_date_and_time
+    } else if (isStandardDenom) {
       mapped[code] = { buy, sell }
       sequences[code] = Number(row.currency_sequence) || seq++
       effectiveDates[code] = row.effective_date_and_time

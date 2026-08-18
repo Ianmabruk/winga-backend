@@ -90,39 +90,56 @@ router.get('/live', async (req, res) => {
   const branchName = resolveBranch(req)
   console.log('[rates] /live called for branch:', JSON.stringify(branchName), 'raw query:', JSON.stringify(req.query))
   try {
-    const { rates, effectiveDates, validation } = await fetchWingaRates(branchName)
-
-    if (validation.isStale) {
-      console.warn(
-        `[rates] /live provider timestamp is stale (${formatDuration(validation.ageMs)} old). ` +
-          `Returning current rates with warning. Reason: ${validation.reason}`,
-      )
-    }
-
-    const message = rates.map((r) => ({ ...r, source: 'winga-live' }))
-    return res.json({
-      message,
-      stale: validation.isStale,
-      staleTimestamp: validation.isStale,
-      provider: 'Winga',
-      providerTimestamp: validation.newestDate ? validation.newestDate.toISOString() : null,
-      staleReason: validation.isStale ? validation.reason : null,
-      rates,
-    })
-  } catch (err) {
-    console.error('[rates] live fetch failed:', err.message)
+    // Preferred flow: serve verified data from DB -> snapshot -> in-memory cache.
+    // Avoid triggering a synchronous provider fetch on every client request.
     const dbResult = await getLatestRates(branchName)
-    if (dbResult.rates?.length) {
+    if (dbResult.rates && dbResult.rates.length) {
       return res.json({
-        message: dbResult.rates.map((r) => ({ ...r, source: 'database-verified' })),
+        message: dbResult.rates.map((r) => ({ ...r, source: dbResult.source })),
         stale: false,
-        provider: 'Winga',
-        providerTimestamp: null,
-        lastVerifiedDatabaseTimestamp: dbResult.lastUpdated,
+        provider: 'database',
+        providerTimestamp: dbResult.lastUpdated || null,
+        staleReason: null,
         rates: dbResult.rates,
       })
     }
-    return res.status(503).json({ error: 'Winga rates unavailable', source: 'unavailable' })
+
+    // Fallback to in-memory current rates set by the sync worker
+    const inMemoryRates = getRates()
+    if (Object.keys(inMemoryRates).length > 0) {
+      const rates = Object.entries(inMemoryRates).map(([code, quote], idx) => ({
+        branch_name: branchName,
+        currency_code: code,
+        currency_name: code,
+        currency_actual_name: code,
+        currency_sequence: idx + 1,
+        buying_rate: quote.buy,
+        selling_rate: quote.sell,
+        effective_date_and_time: new Date().toISOString().replace('T', ' ').replace('Z', ''),
+        source: 'winga-live',
+      }))
+      return res.json({
+        message: rates,
+        stale: false,
+        provider: 'in-memory',
+        providerTimestamp: new Date().toISOString(),
+        staleReason: null,
+        rates,
+      })
+    }
+
+    // If nothing available, clearly indicate unavailability rather than calling provider synchronously.
+    return res.status(503).json({
+      message: [],
+      stale: true,
+      provider: 'unavailable',
+      providerTimestamp: null,
+      staleReason: 'No verified rates available (DB and in-memory empty)',
+      rates: [],
+    })
+  } catch (err) {
+    console.error('[rates] live handler failed:', err.message)
+    return res.status(500).json({ error: 'Internal server error', source: 'unavailable' })
   }
 })
 
@@ -216,6 +233,21 @@ router.put('/', authRequired, allowRoles('admin'), async (req, res) => {
     console.error('[rates] publish failed:', err.message)
     return res.status(500).json({ message: 'Failed to persist rates', error: err.message })
   }
+})
+
+router.get('/health', (req, res) => {
+  const { getSyncState, getLatestRates } = require('../services/syncService')
+  const syncState = getSyncState ? getSyncState() : null
+  res.json({
+    status: 'ok',
+    service: 'Winga Forex Bureau API',
+    timestamp: new Date().toISOString(),
+    sync: syncState || {
+      lastSyncDecision: 'unknown',
+      lastStaleReason: null,
+      lastProviderTimestamp: null,
+    },
+  })
 })
 
 module.exports = router

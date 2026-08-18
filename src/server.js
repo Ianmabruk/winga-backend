@@ -131,16 +131,12 @@ app.get('/api/rates/public', async (_req, res) => {
 app.get('/api/winga-rates.php', async (req, res) => {
   const branch = req.query.branch || 'HEAD OFFICE'
   try {
-    const dbResult = await getLatestRates(branch)
-    if (dbResult.rates?.length) {
-      return res.json({
-        message: dbResult.rates.map((r) => ({ ...r, source: dbResult.source })),
-      })
-    }
-    return res.status(503).json({ error: 'Rates unavailable', source: 'unavailable' })
+    const { rates } = await fetchWingaRates(branch)
+    const message = rates.map((r) => ({ ...r, source: 'winga-live' }))
+    return res.json({ message })
   } catch (err) {
     console.error('[api] winga-rates proxy failed:', err.message)
-    return res.status(503).json({ error: 'Rates unavailable', source: 'unavailable' })
+    return res.status(503).json({ error: 'Winga rates unavailable', source: 'unavailable' })
   }
 })
 

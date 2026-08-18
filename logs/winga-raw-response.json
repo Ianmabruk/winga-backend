@@ -1,0 +1,304 @@
+{
+  "inspectedAt": "2026-08-18T16:47:26.370Z",
+  "endpoint": "https://forex.wingaforex.co.tz/api/method/forex_bureau.vsd_forex_bureau.doctype.branch.api.get_exchange_rates",
+  "branch": "HEAD OFFICE",
+  "requestParams": {
+    "branch_name": "HEAD OFFICE",
+    "_": 1787071646370,
+    "t": 1787071646370
+  },
+  "requestHeaders": {
+    "Authorization": "token a17fdb15f2843f...",
+    "Accept": "application/json",
+    "Cache-Control": "no-cache, no-store, must-revalidate",
+    "Pragma": "no-cache",
+    "Expires": "0",
+    "X-Cache-Bypass": "true",
+    "X-Requested-With": "XMLHttpRequest"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "server": "nginx",
+      "date": "Tue, 18 Aug 2026 16:47:26 GMT",
+      "content-type": "application/json",
+      "transfer-encoding": "chunked",
+      "connection": "keep-alive",
+      "vary": "Accept-Encoding",
+      "set-cookie": "sid=Guest; Expires=Fri, 21 Aug 2026 04:47:26 GMT; Max-Age=216000; Secure; HttpOnly; Path=/; SameSite=Lax, system_user=no; Secure; Path=/; SameSite=Lax, full_name=Guest; Secure; Path=/; SameSite=Lax, user_id=Guest; Secure; Path=/; SameSite=Lax, user_image=; Secure; Path=/; SameSite=Lax",
+      "x-frame-options": "SAMEORIGIN",
+      "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
+      "x-content-type-options": "nosniff",
+      "x-xss-protection": "1; mode=block",
+      "referrer-policy": "same-origin, strict-origin-when-cross-origin"
+    },
+    "body": {
+      "message": [
+        {
+          "branch_name": "HEAD OFFICE",
+          "currency_code": "AED",
+          "currency_name": "AED",
+          "currency_actual_name": "U.A.E. DHIRAMS",
+          "currency_sequence": 0,
+          "buying_rate": 620,
+          "selling_rate": 730,
+          "effective_date_and_time": "2026-08-18 18:43:02"
+        },
+        {
+          "branch_name": "HEAD OFFICE",
+          "currency_code": "AUD",
+          "currency_name": "AUD",
+          "currency_actual_name": "AUSTRALIAN DOLLAR",
+          "currency_sequence": 0,
+          "buying_rate": 1450,
+          "selling_rate": 1810,
+          "effective_date_and_time": "2026-08-18 18:43:02"
+        },
+        {
+          "branch_name": "HEAD OFFICE",
+          "currency_code": "CAD",
+          "currency_name": "CAD",
+          "currency_actual_name": "CANADIAN",
+          "currency_sequence": 0,
+          "buying_rate": 1600,
+          "selling_rate": 1880,
+          "effective_date_and_time": "2026-08-18 18:43:02"
+        },
+        {
+          "branch_name": "HEAD OFFICE",
+          "currency_code": "CHF",
+          "currency_name": "CHF",
+          "currency_actual_name": "SWISS FRANC",
+          "currency_sequence": 0,
+          "buying_rate": 2810,
+          "selling_rate": 3280,
+          "effective_date_and_time": "2026-08-18 18:43:02"
+        },
+        {
+          "branch_name": "HEAD OFFICE",
+          "currency_code": "CNY",
+          "currency_name": "CNY",
+          "currency_actual_name": "CHINESE YUAN",
+          "currency_sequence": 0,
+          "buying_rate": 250,
+          "selling_rate": 390,
+          "effective_date_and_time": "2026-08-18 18:43:02"
+        },
+        {
+          "branch_name": "HEAD OFFICE",
+          "currency_code": "EUR",
+          "currency_name": "EUR",
+          "currency_actual_name": "EURO",
+          "currency_sequence": 0,
+          "buying_rate": 3000,
+          "selling_rate": 3070,
+          "effective_date_and_time": "2026-08-18 18:43:02"
+        },
+        {
+          "branch_name": "HEAD OFFICE",
+          "currency_code": "GBP",
+          "currency_name": "GBP",
+          "currency_actual_name": "STERLING POUND",
+          "currency_sequence": 0,
+          "buying_rate": 3500,
+          "selling_rate": 3700,
+          "effective_date_and_time": "2026-08-18 18:43:02"
+        },
+        {
+          "branch_name": "HEAD OFFICE",
+          "currency_code": "INR",
+          "currency_name": "INR",
+          "currency_actual_name": "INDIAN RUPEES",
+          "currency_sequence": 0,
+          "buying_rate": 20,
+          "selling_rate": 31,
+          "effective_date_and_time": "2026-08-18 18:43:02"
+        },
+        {
+          "branch_name": "HEAD OFFICE",
+          "currency_code": "KES",
+          "currency_name": "KES",
+          "currency_actual_name": "KENYA SHILLINGS",
+          "currency_sequence": 0,
+          "buying_rate": 20,
+          "selling_rate": 20.6,
+          "effective_date_and_time": "2026-08-18 18:43:02"
+        },
+        {
+          "branch_name": "HEAD OFFICE",
+          "currency_code": "OMR",
+          "currency_name": "OMR",
+          "currency_actual_name": "OMAN RIYAL",
+          "currency_sequence": 0,
+          "buying_rate": 5700,
+          "selling_rate": 6960,
+          "effective_date_and_time": "2026-08-18 18:43:02"
+        },
+        {
+          "branch_name": "HEAD OFFICE",
+          "currency_code": "UGX",
+          "currency_name": "UGX",
+          "currency_actual_name": "UGANDA SHILLINGS",
+          "currency_sequence": 0,
+          "buying_rate": 0.35,
+          "selling_rate": 0.7,
+          "effective_date_and_time": "2026-08-18 18:43:02"
+        },
+        {
+          "branch_name": "HEAD OFFICE",
+          "currency_code": "USD",
+          "currency_name": "USD ($5,$10,$20)",
+          "currency_actual_name": "USD ($5,$10,$20)",
+          "currency_sequence": 0,
+          "buying_rate": 2620,
+          "selling_rate": 2663,
+          "effective_date_and_time": "2026-08-18 18:43:02"
+        },
+        {
+          "branch_name": "HEAD OFFICE",
+          "currency_code": "USD",
+          "currency_name": "USD ($1)",
+          "currency_actual_name": "USD ($1)",
+          "currency_sequence": 0,
+          "buying_rate": 2620,
+          "selling_rate": 2663,
+          "effective_date_and_time": "2026-08-18 18:43:02"
+        },
+        {
+          "branch_name": "HEAD OFFICE",
+          "currency_code": "USD",
+          "currency_name": "USD",
+          "currency_actual_name": "US DOLLARS",
+          "currency_sequence": 0,
+          "buying_rate": 2630,
+          "selling_rate": 2663,
+          "effective_date_and_time": "2026-08-18 18:43:02"
+        },
+        {
+          "branch_name": "HEAD OFFICE",
+          "currency_code": "USD",
+          "currency_name": "USD (1996-2003)",
+          "currency_actual_name": "USD (1996-2003)",
+          "currency_sequence": 0,
+          "buying_rate": 2550,
+          "selling_rate": 2663,
+          "effective_date_and_time": "2026-08-18 18:43:02"
+        },
+        {
+          "branch_name": "HEAD OFFICE",
+          "currency_code": "ZAR",
+          "currency_name": "ZAR",
+          "currency_actual_name": "S.A. RAND",
+          "currency_sequence": 0,
+          "buying_rate": 140,
+          "selling_rate": 165,
+          "effective_date_and_time": "2026-08-18 18:43:02"
+        }
+      ]
+    }
+  },
+  "analysis": {
+    "totalRates": 16,
+    "timestampFields": [
+      "effective_date_and_time"
+    ],
+    "ratesSummary": [
+      {
+        "currency_code": "AED",
+        "buying_rate": 620,
+        "selling_rate": 730,
+        "effective_date_and_time": "2026-08-18 18:43:02"
+      },
+      {
+        "currency_code": "AUD",
+        "buying_rate": 1450,
+        "selling_rate": 1810,
+        "effective_date_and_time": "2026-08-18 18:43:02"
+      },
+      {
+        "currency_code": "CAD",
+        "buying_rate": 1600,
+        "selling_rate": 1880,
+        "effective_date_and_time": "2026-08-18 18:43:02"
+      },
+      {
+        "currency_code": "CHF",
+        "buying_rate": 2810,
+        "selling_rate": 3280,
+        "effective_date_and_time": "2026-08-18 18:43:02"
+      },
+      {
+        "currency_code": "CNY",
+        "buying_rate": 250,
+        "selling_rate": 390,
+        "effective_date_and_time": "2026-08-18 18:43:02"
+      },
+      {
+        "currency_code": "EUR",
+        "buying_rate": 3000,
+        "selling_rate": 3070,
+        "effective_date_and_time": "2026-08-18 18:43:02"
+      },
+      {
+        "currency_code": "GBP",
+        "buying_rate": 3500,
+        "selling_rate": 3700,
+        "effective_date_and_time": "2026-08-18 18:43:02"
+      },
+      {
+        "currency_code": "INR",
+        "buying_rate": 20,
+        "selling_rate": 31,
+        "effective_date_and_time": "2026-08-18 18:43:02"
+      },
+      {
+        "currency_code": "KES",
+        "buying_rate": 20,
+        "selling_rate": 20.6,
+        "effective_date_and_time": "2026-08-18 18:43:02"
+      },
+      {
+        "currency_code": "OMR",
+        "buying_rate": 5700,
+        "selling_rate": 6960,
+        "effective_date_and_time": "2026-08-18 18:43:02"
+      },
+      {
+        "currency_code": "UGX",
+        "buying_rate": 0.35,
+        "selling_rate": 0.7,
+        "effective_date_and_time": "2026-08-18 18:43:02"
+      },
+      {
+        "currency_code": "USD",
+        "buying_rate": 2620,
+        "selling_rate": 2663,
+        "effective_date_and_time": "2026-08-18 18:43:02"
+      },
+      {
+        "currency_code": "USD",
+        "buying_rate": 2620,
+        "selling_rate": 2663,
+        "effective_date_and_time": "2026-08-18 18:43:02"
+      },
+      {
+        "currency_code": "USD",
+        "buying_rate": 2630,
+        "selling_rate": 2663,
+        "effective_date_and_time": "2026-08-18 18:43:02"
+      },
+      {
+        "currency_code": "USD",
+        "buying_rate": 2550,
+        "selling_rate": 2663,
+        "effective_date_and_time": "2026-08-18 18:43:02"
+      },
+      {
+        "currency_code": "ZAR",
+        "buying_rate": 140,
+        "selling_rate": 165,
+        "effective_date_and_time": "2026-08-18 18:43:02"
+      }
+    ]
+  }
+}

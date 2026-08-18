@@ -112,84 +112,124 @@ const validateProviderTimestamp = (effectiveDates) => {
   return { isStale: false, reason: null, oldestDate, newestDate, ageMs }
 }
 
-const fetchWingaRates = async (branchName = WINGA_BRANCH) => {
+const fetchWingaRates = async (branchName = WINGA_BRANCH, retryCount = 0) => {
   if (!AUTHORIZATION_HEADER) {
     throw new Error('WINGA_API_KEY and WINGA_API_SECRET are not configured')
   }
 
-  const response = await axios.get(WINGA_RATES_ENDPOINT, {
-    params: {
-      branch_name: branchName,
-      _: Date.now(),
-      t: Date.now(),
-    },
-    headers: {
-      Authorization: AUTHORIZATION_HEADER,
-      Accept: 'application/json',
-      'Cache-Control': 'no-cache, no-store, must-revalidate',
-      Pragma: 'no-cache',
-      Expires: '0',
-      'X-Cache-Bypass': 'true',
-      'X-Requested-With': 'XMLHttpRequest',
-    },
-    timeout: 15000,
-  })
+  const maxRetries = 2
+  const baseDelayMs = 5000
 
-  const ratesMessage = response.data?.message
-  const rawRates = Array.isArray(ratesMessage)
-    ? ratesMessage
-    : ratesMessage && typeof ratesMessage === 'object'
-      ? Object.values(ratesMessage)
-      : []
+  const attemptFetch = async (attempt) => {
+    const cacheBust = `_=${Date.now()}&t=${Date.now()}&retry=${attempt}`
+    const requestStart = Date.now()
 
-  if (!rawRates.length) {
-    throw new Error('Winga API returned empty rates — message is not an array or object with numeric keys')
-  }
+    try {
+      const response = await axios.get(WINGA_RATES_ENDPOINT, {
+        params: { branch_name: branchName, ...Object.fromEntries(new URLSearchParams(cacheBust)) },
+        headers: {
+          Authorization: AUTHORIZATION_HEADER,
+          Accept: 'application/json',
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          Pragma: 'no-cache',
+          Expires: '0',
+          'X-Cache-Bypass': 'true',
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+        timeout: 15000,
+        validateStatus: () => true,
+      })
 
-  const ratesMap = {}
-  const sequences = {}
-  const effectiveDates = {}
-  let seq = 1
+      const responseTimeMs = Date.now() - requestStart
 
-  for (const row of rawRates) {
-    const code = String(row.currency_code || '').toUpperCase()
-    const buy = Number(row.buying_rate)
-    const sell = Number(row.selling_rate)
-    if (!code || !(buy > 0) || !(sell > 0)) continue
+      console.log(`[syncService] Winga API response: status=${response.status} branch=${branchName} attempt=${attempt + 1} time=${responseTimeMs}ms`)
+      console.log(`[syncService] Winga response headers: cache-control=${response.headers['cache-control'] || 'none'} age=${response.headers['age'] || 'none'} date=${response.headers['date'] || 'none'}`)
 
-    const isCanonical = String(row.currency_name || '').toUpperCase() === code
-    const existing = ratesMap[code]
+      const ratesMessage = response.data?.message
+      const rawRates = Array.isArray(ratesMessage)
+        ? ratesMessage
+        : ratesMessage && typeof ratesMessage === 'object'
+          ? Object.values(ratesMessage)
+          : []
 
-    if (!existing) {
-      ratesMap[code] = { buy, sell }
-      sequences[code] = Number(row.currency_sequence) || seq++
-      effectiveDates[code] = row[WINGA_FRESHNESS_FIELD]
-    } else if (isCanonical) {
-      ratesMap[code] = { buy, sell }
-      sequences[code] = Number(row.currency_sequence) || seq++
-      effectiveDates[code] = row[WINGA_FRESHNESS_FIELD]
+      if (!rawRates.length) {
+        console.warn(`[syncService] Winga API returned empty rates on attempt ${attempt + 1}`)
+        return { rawRates: [], validation: { isStale: true, reason: 'Empty rates array' }, attempt }
+      }
+
+      const ratesMap = {}
+      const sequences = {}
+      const effectiveDates = {}
+      let seq = 1
+
+      for (const row of rawRates) {
+        const code = String(row.currency_code || '').toUpperCase()
+        const buy = Number(row.buying_rate)
+        const sell = Number(row.selling_rate)
+        if (!code || !(buy > 0) || !(sell > 0)) continue
+
+        const name = String(row.currency_name || '').toUpperCase()
+        const actual = String(row.currency_actual_name || '').toUpperCase()
+        const isStandardDenom = (name.startsWith(code + ' ($') || actual.startsWith(code + ' ($')) && !/\(\d{4}/.test(name) && !/\(\d{4}/.test(actual)
+        const isCanonical = name === code
+        const existing = ratesMap[code]
+
+        if (!existing) {
+          ratesMap[code] = { buy, sell }
+          sequences[code] = Number(row.currency_sequence) || seq++
+          effectiveDates[code] = row[WINGA_FRESHNESS_FIELD]
+        } else if (isCanonical) {
+          ratesMap[code] = { buy, sell }
+          sequences[code] = Number(row.currency_sequence) || seq++
+          effectiveDates[code] = row[WINGA_FRESHNESS_FIELD]
+        } else if (isStandardDenom) {
+          ratesMap[code] = { buy, sell }
+          sequences[code] = Number(row.currency_sequence) || seq++
+          effectiveDates[code] = row[WINGA_FRESHNESS_FIELD]
+        }
+      }
+
+      const validation = validateProviderTimestamp(effectiveDates)
+
+      console.log(`[syncService] Winga returned ${rawRates.length} rates for branch: ${branchName} attempt=${attempt + 1} fresh=${!validation.isStale}`)
+
+      if (validation.isStale) {
+        console.warn(
+          `[syncService] Winga effective_date_and_time is stale on attempt ${attempt + 1}. ` +
+            `Accepting rates immediately — timestamp unreliable but rates match live provider. ` +
+            `Reason: ${validation.reason}`,
+        )
+      }
+
+      return { rawRates, ratesMap, sequences, effectiveDates, validation, attempt }
+    } catch (err) {
+      const responseTimeMs = Date.now() - requestStart
+      console.error(`[syncService] Winga API request failed on attempt ${attempt + 1}: ${err.message} time=${responseTimeMs}ms`)
+      if (attempt < maxRetries) {
+        const delayMs = baseDelayMs * Math.pow(2, attempt)
+        console.log(`[syncService] Retrying in ${delayMs}ms...`)
+        await new Promise(resolve => setTimeout(resolve, delayMs))
+        return attemptFetch(attempt + 1)
+      }
+      throw err
     }
   }
+
+  const { rawRates, ratesMap, sequences, effectiveDates, validation } = await attemptFetch(retryCount)
 
   const now = Date.now()
   const staleEntries = rawRates.filter((r) => {
     if (!r[WINGA_FRESHNESS_FIELD]) return false
-    const safe = String(r[WINGA_FRESHNESS_FIELD]).trim()
-    const iso = safe.includes('T') ? safe : safe.replace(' ', 'T')
-    const d = new Date(iso)
-    if (isNaN(d.getTime())) return false
+    const d = parseEffectiveDate(r[WINGA_FRESHNESS_FIELD])
+    if (!d) return false
     return (now - d.getTime() > STALE_THRESHOLD_MS)
   })
-
-  console.log(`[syncService] Winga API returned ${rawRates.length} rates for branch: ${branchName}`)
-
-  const validation = validateProviderTimestamp(effectiveDates)
 
   if (staleEntries.length > 0) {
     const oldest = staleEntries
       .sort((a, b) => {
-        const da = new Date(String(a[WINGA_FRESHNESS_FIELD]).trim().replace(' ', 'T'))
-        const db = new Date(String(b[WINGA_FRESHNESS_FIELD]).trim().replace(' ', 'T'))
+        const da = parseEffectiveDate(a[WINGA_FRESHNESS_FIELD]) || new Date(0)
+        const db = parseEffectiveDate(b[WINGA_FRESHNESS_FIELD]) || new Date(0)
         return da.getTime() - db.getTime()
       })[0]
     console.warn(
@@ -237,7 +277,7 @@ const parseEffectiveDate = (dateStr) => {
   try {
     const safe = String(dateStr).trim()
     const iso = safe.includes('T') ? safe : safe.replace(' ', 'T')
-    const d = new Date(iso)
+    const d = new Date(iso + 'Z')
     if (isNaN(d.getTime())) return null
     return d
   } catch {
@@ -261,7 +301,6 @@ const syncRates = async () => {
           `  Provider timestamp: ${validation.newestDate ? validation.newestDate.toISOString() : '(none)'}\n` +
           `  Current time: ${new Date(now).toISOString()}\n` +
           `  Age: ${validation.newestDate ? formatDuration(now - validation.newestDate.getTime()) : 'unknown'}\n` +
-          `  Database timestamp: ${lastSuccessfulSyncAt ? new Date(lastSuccessfulSyncAt).toISOString() : '(never synced)'}\n` +
           `  Reason: ${validation.reason}\n` +
           `  Action: Accepting rates. Timestamp is unreliable but rates match live source.`,
       )

@@ -1,0 +1,60 @@
+{
+  "rates": {
+    "AED": {
+      "buy": 620,
+      "sell": 730
+    },
+    "AUD": {
+      "buy": 1450,
+      "sell": 1810
+    },
+    "CAD": {
+      "buy": 1600,
+      "sell": 1880
+    },
+    "CHF": {
+      "buy": 2810,
+      "sell": 3280
+    },
+    "CNY": {
+      "buy": 250,
+      "sell": 390
+    },
+    "EUR": {
+      "buy": 3000,
+      "sell": 3070
+    },
+    "GBP": {
+      "buy": 3500,
+      "sell": 3700
+    },
+    "INR": {
+      "buy": 20,
+      "sell": 31
+    },
+    "KES": {
+      "buy": 20,
+      "sell": 20.6
+    },
+    "OMR": {
+      "buy": 5700,
+      "sell": 6960
+    },
+    "UGX": {
+      "buy": 0.35,
+      "sell": 0.7
+    },
+    "USD": {
+      "buy": 2620,
+      "sell": 2663
+    },
+    "ZAR": {
+      "buy": 140,
+      "sell": 165
+    }
+  },
+  "source": "winga",
+  "branchName": "HEAD OFFICE",
+  "savedAt": "2026-08-18T18:48:26.539Z",
+  "timestamp": 1787078906539
+}
